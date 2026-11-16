@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Menu C3",
+        "description": "Saisissez le nom ESPHome (esphome.name), par exemple ha-menu-c3.",
+        "data": {"device_name": "Nom du périphérique ESPHome"}
+      }
+    },
+    "error": {"invalid_name": "Nom ESPHome invalide"},
+    "abort": {"already_configured": "Une instance est déjà configurée"}
+  }
+}

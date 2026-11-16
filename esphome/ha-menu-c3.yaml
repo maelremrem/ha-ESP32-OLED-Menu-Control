@@ -1,0 +1,660 @@
+substitutions:
+  device_name: ha-menu-c3
+  friendly_name: HA Menu C3
+  encoder_debounce_ms: "35"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -10
+    then:
+      - lambda: |-
+          // Demo menu; Home Assistant can replace it at runtime.
+          id(menu_ids)[0] = "lights";
+          id(menu_labels)[0] = "Eclairage";
+          id(menu_parents)[0] = "";
+          id(menu_ids)[1] = "night";
+          id(menu_labels)[1] = "Mode nuit";
+          id(menu_parents)[1] = "";
+          id(menu_ids)[2] = "garage";
+          id(menu_labels)[2] = "Garage";
+          id(menu_parents)[2] = "";
+          id(menu_ids)[3] = "salon";
+          id(menu_labels)[3] = "Salon";
+          id(menu_parents)[3] = "lights";
+          id(menu_ids)[4] = "kitchen";
+          id(menu_labels)[4] = "Cuisine";
+          id(menu_parents)[4] = "lights";
+          id(menu_length) = 5;
+          id(last_input) = millis();
+          id(boot_started) = millis();
+      - script.execute: boot_led
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  id: native_api
+  encryption:
+    key: !secret api_encryption_key
+  on_client_connected:
+    then:
+      - delay: 3s
+      - homeassistant.event:
+          event: esphome.ha_menu_ready
+          data:
+            device: ha-menu-c3
+  actions:
+    - action: set_menu_item
+      description: Add or update a menu entry at a given position
+      variables:
+        slot: int
+        item_id: string
+        parent_id: string
+        label: string
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= 32 || item_id.empty() || label.empty()) return;
+            id(menu_ids)[slot] = item_id.substr(0, 40);
+            id(menu_parents)[slot] = parent_id.substr(0, 40);
+            id(menu_labels)[slot] = label.substr(0, 64);
+            id(current_page) = "";
+            id(cursor) = 0;
+            id(transition_direction) = 0;
+            id(screen_sleep) = false;
+            id(last_input) = millis();
+
+    - action: set_menu_count
+      description: Set the number of active entries (0 to 32)
+      variables:
+        count: int
+      then:
+        - lambda: |-
+            id(menu_length) = static_cast<int>(std::clamp<int32_t>(count, 0, 32));
+            id(current_page) = "";
+            id(cursor) = 0;
+            id(transition_direction) = 0;
+            id(screen_sleep) = false;
+            id(last_input) = millis();
+
+    - action: set_base_led
+      description: Change the persistent LED color (RGB values 0 to 255)
+      variables:
+        red: int
+        green: int
+        blue: int
+      then:
+        - lambda: |-
+            id(base_red) = static_cast<int>(std::clamp<int32_t>(red, 0, 255));
+            id(base_green) = static_cast<int>(std::clamp<int32_t>(green, 0, 255));
+            id(base_blue) = static_cast<int>(std::clamp<int32_t>(blue, 0, 255));
+        - if:
+            condition:
+              lambda: 'return !id(led_busy);'
+            then:
+              - script.execute: restore_led
+
+    - action: play_led_animation
+      description: Play a temporary LED animation (notify or identify)
+      variables:
+        animation: string
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(led_busy) && animation == "notify";'
+            then:
+              - script.execute: notify_led
+        - if:
+            condition:
+              lambda: 'return !id(led_busy) && animation == "identify";'
+            then:
+              - script.execute: identify_led
+
+    - action: action_result
+      description: Report success or failure of a selected menu action
+      variables:
+        item_id: string
+        success: bool
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(pending_item).empty() && id(pending_item) == item_id;'
+            then:
+              - script.stop: pending_timeout
+              - lambda: id(pending_item).clear();
+              - if:
+                  condition:
+                    lambda: 'return success;'
+                  then:
+                    - script.execute: success_led
+                  else:
+                    - script.execute: error_led
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true
+  frequency: 400kHz
+
+font:
+  - file: "gfonts://Roboto"
+    id: title_font
+    size: 10
+    glyphsets:
+      - GF_Latin_Core
+  - file: "gfonts://Roboto"
+    id: menu_font
+    size: 11
+    glyphsets:
+      - GF_Latin_Core
+
+globals:
+  - id: menu_ids
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_labels
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_parents
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_length
+    type: int
+    initial_value: '0'
+  - id: current_page
+    type: std::string
+    initial_value: '""'
+  - id: cursor
+    type: int
+    initial_value: '0'
+  - id: screen_sleep
+    type: bool
+    initial_value: 'false'
+  - id: last_input
+    type: uint32_t
+    initial_value: '0'
+  - id: last_encoder_step
+    type: uint32_t
+    initial_value: '0'
+  - id: previous_page
+    type: std::string
+    initial_value: '""'
+  - id: previous_cursor
+    type: int
+    initial_value: '0'
+  - id: transition_started
+    type: uint32_t
+    initial_value: '0'
+  - id: transition_direction
+    type: int
+    initial_value: '0'
+  - id: boot_started
+    type: uint32_t
+    initial_value: '0'
+  - id: press_start
+    type: uint32_t
+    initial_value: '0'
+  - id: pending_item
+    type: std::string
+    initial_value: '""'
+  - id: led_busy
+    type: bool
+    initial_value: 'false'
+  - id: base_red
+    type: int
+    initial_value: '0'
+  - id: base_green
+    type: int
+    initial_value: '180'
+  - id: base_blue
+    type: int
+    initial_value: '0'
+
+sensor:
+  - platform: rotary_encoder
+    id: menu_encoder
+    pin_a:
+      number: GPIO6
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: GPIO7
+      mode:
+        input: true
+        pullup: true
+    # One decoded step per complete quadrature cycle (KY-040).
+    resolution: 1
+    on_clockwise:
+      - script.execute:
+          id: move_cursor
+          direction: 1
+    on_anticlockwise:
+      - script.execute:
+          id: move_cursor
+          direction: -1
+
+binary_sensor:
+  - platform: gpio
+    id: menu_button
+    pin:
+      number: GPIO3
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      - lambda: id(press_start) = millis();
+    on_release:
+      - if:
+          condition:
+            lambda: 'return (uint32_t)(millis() - id(press_start)) >= 700;'
+          then:
+            - script.execute: back_menu
+          else:
+            - script.execute: select_menu
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_rgb
+    name: "Status RGB"
+    pin: GPIO10
+    num_leds: 1
+    chipset: ws2812
+    channel_colors: GRB
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    effects:
+      - pulse:
+          name: "Working"
+          transition_length: 400ms
+          update_interval: 400ms
+          min_brightness: 5%
+          max_brightness: 35%
+
+display:
+  - platform: ssd1306_i2c
+    id: oled
+    model: "SSD1306 128x64"
+    address: 0x3C
+    update_interval: 50ms
+    lambda: |-
+      it.fill(COLOR_OFF);
+      if (id(screen_sleep)) return;
+
+      const uint32_t now = millis();
+      const uint32_t boot_age = (uint32_t)(now - id(boot_started));
+      if (boot_age < 750) {
+        it.print(19, 13, id(menu_font), "HA MENU C3");
+        it.line(16, 34, 111, 34);
+        it.filled_rectangle(16, 40, (boot_age * 96U) / 750U, 3);
+        return;
+      }
+
+      // Render a page at any horizontal offset for slide transitions.
+      auto render_page = [&](const std::string &page, int x, int selection) {
+        std::string title = "HA MENU";
+        for (int i = 0; i < id(menu_length); i++) {
+          if (!page.empty() && id(menu_ids)[i] == page) {
+            title = id(menu_labels)[i];
+            break;
+          }
+        }
+        if (title.size() > 16) title = title.substr(0, 16);
+        it.print(x, 0, id(title_font), title.c_str());
+        it.print(x + 127, 0, id(title_font), TextAlign::TOP_RIGHT,
+                 id(native_api).is_connected_with_state_subscription() ? "ON" : "OFF");
+        it.line(x, 13, x + 127, 13);
+
+        int child_count = 0;
+        for (int i = 0; i < id(menu_length); i++) {
+          if (id(menu_parents)[i] == page) child_count++;
+        }
+        // A virtual back entry lives at position zero in every submenu.
+        const bool has_back = !page.empty();
+        const int total = child_count + (has_back ? 1 : 0);
+        if (total == 0) {
+          it.print(x + 3, 27, id(menu_font), "Aucune entree");
+          return;
+        }
+        const int start = (selection / 4) * 4;
+        auto draw_row = [&](int position, const std::string &label, bool submenu) {
+          if (position < start || position >= start + 4) return;
+          const int y = 16 + (position - start) * 12;
+          const bool selected = (position == selection);
+          const auto ink = selected ? COLOR_OFF : COLOR_ON;
+          if (selected) it.filled_rectangle(x, y, 128, 12, COLOR_ON);
+          std::string text = label;
+          if (text.size() > 19) text = text.substr(0, 19);
+          it.print(x + 3, y, id(menu_font), ink, text.c_str());
+          if (submenu) it.print(x + 119, y, id(menu_font), ink, ">");
+        };
+
+        int position = 0;
+        if (has_back) draw_row(position++, "< Retour", false);
+        for (int i = 0; i < id(menu_length); i++) {
+          if (id(menu_parents)[i] != page) continue;
+          bool submenu = false;
+          for (int j = 0; j < id(menu_length); j++) {
+            if (id(menu_parents)[j] == id(menu_ids)[i]) {
+              submenu = true;
+              break;
+            }
+          }
+          draw_row(position++, id(menu_labels)[i], submenu);
+        }
+      };
+
+      const uint32_t age = (uint32_t)(now - id(transition_started));
+      if (id(transition_direction) != 0 && age < 220) {
+        const int dx = (int)((age * 128U) / 220U);
+        if (id(transition_direction) > 0) {
+          render_page(id(previous_page), -dx, id(previous_cursor));
+          render_page(id(current_page), 128 - dx, id(cursor));
+        } else {
+          render_page(id(previous_page), dx, id(previous_cursor));
+          render_page(id(current_page), -128 + dx, id(cursor));
+        }
+      } else {
+        render_page(id(current_page), 0, id(cursor));
+      }
+
+      // An animated loading bar under the title while HA executes an action.
+      if (!id(pending_item).empty()) {
+        const int x = (int)((now / 9U) % 128U);
+        it.filled_rectangle(x, 14, 18, 1, COLOR_ON);
+      }
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (!id(screen_sleep) && (uint32_t)(millis() - id(last_input)) > 30000) {
+            id(screen_sleep) = true;
+          }
+
+script:
+  - id: move_cursor
+    mode: restart
+    parameters:
+      direction: int
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          // Guard against mechanical bounce; tune encoder_debounce_ms.
+          if ((uint32_t)(now - id(last_encoder_step)) < ${encoder_debounce_ms}) return;
+          id(last_encoder_step) = now;
+          bool was_asleep = id(screen_sleep);
+          id(screen_sleep) = false;
+          id(last_input) = now;
+          if (was_asleep) return;
+          int children = id(current_page).empty() ? 0 : 1;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] == id(current_page)) children++;
+          }
+          if (children > 0) {
+            id(cursor) = (id(cursor) + direction + children) % children;
+          } else {
+            id(cursor) = 0;
+          }
+
+  - id: back_menu
+    mode: restart
+    then:
+      - lambda: |-
+          bool was_asleep = id(screen_sleep);
+          id(screen_sleep) = false;
+          id(last_input) = millis();
+          if (was_asleep || id(current_page).empty()) return;
+          id(previous_page) = id(current_page);
+          id(previous_cursor) = id(cursor);
+          std::string parent = "";
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_ids)[i] == id(current_page)) {
+              parent = id(menu_parents)[i];
+              break;
+            }
+          }
+          const std::string opened_page = id(current_page);
+          id(current_page) = parent;
+          // Highlight the submenu we just left in its parent page.
+          int position = parent.empty() ? 0 : 1;
+          id(cursor) = 0;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != parent) continue;
+            if (id(menu_ids)[i] == opened_page) {
+              id(cursor) = position;
+              break;
+            }
+            position++;
+          }
+          id(transition_direction) = -1;
+          id(transition_started) = millis();
+
+  - id: select_menu
+    mode: restart
+    then:
+      - lambda: |-
+          bool was_asleep = id(screen_sleep);
+          id(screen_sleep) = false;
+          id(last_input) = millis();
+          if (was_asleep) return;
+
+          if (!id(current_page).empty() && id(cursor) == 0) {
+            id(back_menu).execute();
+            return;
+          }
+          int child = id(current_page).empty() ? 0 : 1;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != id(current_page)) continue;
+            if (child++ != id(cursor)) continue;
+            for (int j = 0; j < id(menu_length); j++) {
+              if (id(menu_parents)[j] == id(menu_ids)[i]) {
+                id(previous_page) = id(current_page);
+                id(previous_cursor) = id(cursor);
+                id(current_page) = id(menu_ids)[i];
+                id(cursor) = 0;
+                id(transition_direction) = 1;
+                id(transition_started) = millis();
+                return;
+              }
+            }
+            id(pending_item) = id(menu_ids)[i];
+            id(send_selection).execute();
+            return;
+          }
+
+  - id: send_selection
+    mode: restart
+    then:
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - lambda: id(led_busy) = true;
+            - script.execute: pending_led
+            - script.execute: pending_timeout
+            - homeassistant.event:
+                event: esphome.ha_menu_selected
+                data:
+                  device: ha-menu-c3
+                data_template:
+                  item_id: "{{ selected_id }}"
+                variables:
+                  selected_id: !lambda 'return id(pending_item);'
+          else:
+            - lambda: id(pending_item).clear();
+            - script.execute: error_led
+
+  - id: boot_led
+    mode: restart
+    then:
+      - lambda: id(led_busy) = true;
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 55%
+                green: 0%
+                blue: 100%
+                brightness: 30%
+                transition_length: 0s
+            - delay: 100ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 90ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: notify_led
+    mode: restart
+    then:
+      - lambda: id(led_busy) = true;
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - repeat:
+          count: 3
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 100%
+                green: 35%
+                blue: 0%
+                brightness: 40%
+                transition_length: 0s
+            - delay: 180ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 150ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: identify_led
+    mode: restart
+    then:
+      - lambda: id(led_busy) = true;
+      - light.turn_on:
+          id: status_rgb
+          red: 60%
+          green: 0%
+          blue: 100%
+          brightness: 35%
+          effect: Working
+      - delay: 2200ms
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: pending_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: status_rgb
+          red: 0%
+          green: 0%
+          blue: 100%
+          brightness: 30%
+          effect: Working
+
+  - id: pending_timeout
+    mode: restart
+    then:
+      - delay: 10s
+      - lambda: id(pending_item).clear();
+      - script.execute: error_led
+
+  - id: success_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 0%
+                green: 100%
+                blue: 0%
+                brightness: 40%
+                transition_length: 0s
+            - delay: 160ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 120ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: error_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - repeat:
+          count: 3
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 100%
+                green: 0%
+                blue: 0%
+                brightness: 40%
+                transition_length: 0s
+            - delay: 150ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 140ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: restore_led
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return id(base_red) == 0 && id(base_green) == 0 && id(base_blue) == 0;'
+          then:
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+          else:
+            - light.turn_on:
+                id: status_rgb
+                effect: none
+            - light.turn_on:
+                id: status_rgb
+                red: !lambda 'return id(base_red) / 255.0f;'
+                green: !lambda 'return id(base_green) / 255.0f;'
+                blue: !lambda 'return id(base_blue) / 255.0f;'
+                brightness: 35%
+                transition_length: 0s

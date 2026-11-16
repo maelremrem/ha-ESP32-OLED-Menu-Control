@@ -1,0 +1,15 @@
+{
+  "items": [
+    {"id":"lights", "label":"Eclairage", "parent":"", "service":"", "entity_id":"", "data":{}},
+    {"id":"salon", "label":"Salon", "parent":"lights", "service":"light.toggle", "entity_id":"light.salon", "data":{}},
+    {"id":"kitchen", "label":"Cuisine", "parent":"lights", "service":"light.toggle", "entity_id":"light.cuisine", "data":{}},
+    {"id":"night", "label":"Mode nuit", "parent":"", "service":"script.turn_on", "entity_id":"script.mode_nuit", "data":{}},
+    {"id":"garage", "label":"Garage", "parent":"", "service":"cover.open_cover", "entity_id":"cover.garage", "data":{}}
+  ],
+  "led": {
+    "entity_id":"binary_sensor.porte_garage",
+    "active_state":"on",
+    "on":[255,70,0],
+    "off":[0,160,0]
+  }
+}
