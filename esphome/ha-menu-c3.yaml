@@ -2,6 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
+  fw_version: "0.3.0"
 
 esphome:
   name: ${device_name}
@@ -39,6 +40,7 @@ esp32:
 logger:
 
 wifi:
+  id: wifi_node
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
@@ -71,6 +73,15 @@ api:
             id(cursor) = 0;
             id(transition_direction) = 0;
             // Passive configuration sync must not wake a sleeping device.
+
+    - action: set_menu_status
+      description: Update the live Home Assistant state for a menu entry
+      variables:
+        slot: int
+        status: string
+      then:
+        - lambda: |-
+            if (slot >= 0 && slot < 32) id(menu_states)[slot] = status.substr(0, 12);
 
     - action: set_menu_count
       description: Set the number of active entries (0 to 32)
@@ -145,13 +156,20 @@ api:
       variables:
         item_id: string
         success: bool
+        message: string
       then:
         - if:
             condition:
               lambda: 'return !id(pending_item).empty() && id(pending_item) == item_id;'
             then:
               - script.stop: pending_timeout
-              - lambda: id(pending_item).clear();
+              - lambda: |-
+                  id(pending_item).clear();
+                  if (!id(feedback_suppressed)) {
+                    id(feedback_mode) = success ? 2 : 3;
+                    id(feedback_message) = message.substr(0, 96);
+                    id(feedback_started) = millis();
+                  }
               - if:
                   condition:
                     lambda: 'return success;'
@@ -195,6 +213,10 @@ globals:
     type: std::vector<std::string>
     restore_value: no
     initial_value: 'std::vector<std::string>(32)'
+  - id: menu_states
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
   - id: menu_length
     type: int
     initial_value: '0'
@@ -234,6 +256,21 @@ globals:
   - id: pending_item
     type: std::string
     initial_value: '""'
+  - id: feedback_mode
+    type: int
+    initial_value: '0'
+  - id: feedback_message
+    type: std::string
+    initial_value: '""'
+  - id: feedback_item
+    type: std::string
+    initial_value: '""'
+  - id: feedback_started
+    type: uint32_t
+    initial_value: '0'
+  - id: feedback_suppressed
+    type: bool
+    initial_value: 'false'
   - id: sleep_timeout_sec
     type: int
     initial_value: '30'
@@ -255,6 +292,7 @@ globals:
 
 sensor:
   - platform: wifi_signal
+    id: wifi_strength
     name: "WiFi Signal"
     update_interval: 30s
     entity_category: diagnostic
@@ -320,7 +358,12 @@ binary_sensor:
 text_sensor:
   - platform: wifi_info
     ip_address:
+      id: device_ip
       name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      id: device_ssid
+      name: "WiFi SSID"
       entity_category: diagnostic
   - platform: template
     id: extension_last_update
@@ -394,76 +437,142 @@ display:
     lambda: |-
       it.fill(COLOR_OFF);
       if (id(screen_sleep)) return;
-
       const uint32_t now = millis();
-      const uint32_t boot_age = (uint32_t)(now - id(boot_started));
-      if (boot_age < 750) {
+      if ((uint32_t)(now - id(boot_started)) < 750) {
         it.print(19, 13, id(menu_font), "HA MENU C3");
         it.line(16, 34, 111, 34);
-        it.filled_rectangle(16, 40, (boot_age * 96U) / 750U, 3);
+        it.filled_rectangle(16, 40, ((now - id(boot_started)) * 96U) / 750U, 3);
         return;
       }
 
-      // Render a page at any horizontal offset for slide transitions.
+      // Action feedback: command sent is not the same as physical state confirmed.
+      if (id(feedback_mode) != 0) {
+        const int mode = id(feedback_mode);
+        if (mode == 1) {
+          it.print(3, 2, id(title_font), "EN COURS");
+          it.line(0, 14, 127, 14);
+          it.print(4, 24, id(menu_font), "Commande envoyee...");
+          it.filled_rectangle((now / 9U) % 118U, 52, 10, 3);
+        } else {
+          const bool ok = (mode == 2);
+          if (ok) {
+            it.line(10, 20, 21, 31);
+            it.line(21, 31, 40, 11);
+            it.line(11, 20, 21, 30);
+            it.line(21, 30, 39, 12);
+          } else {
+            it.line(14, 13, 36, 35);
+            it.line(36, 13, 14, 35);
+            it.line(15, 13, 37, 35);
+            it.line(37, 13, 15, 35);
+          }
+          it.print(47, 6, id(title_font), ok ? "ENVOYEE" : "ERREUR");
+          it.print(47, 20, id(title_font), id(feedback_item).substr(0, 12).c_str());
+          std::string msg = id(feedback_message);
+          if (msg.empty()) msg = ok ? "Commande envoyee" : "Echec de l'action";
+          // Up to two wrapped lines for the error or success explanation.
+          int offset = 0;
+          for (int line = 0; line < 2 && offset < (int)msg.size(); line++) {
+            int take = std::min(20, (int)msg.size() - offset);
+            if (offset + take < (int)msg.size()) {
+              int space = (int)msg.rfind(' ', offset + take - 1);
+              if (space > offset + 5) take = space - offset;
+            }
+            it.print(2, 39 + line * 12, id(title_font), msg.substr(offset, take).c_str());
+            offset += take;
+            while (offset < (int)msg.size() && msg[offset] == ' ') offset++;
+          }
+        }
+        return;
+      }
+
       auto render_page = [&](const std::string &page, int x, int selection) {
-        std::string title = "HA MENU";
-        for (int i = 0; i < id(menu_length); i++) {
+        const bool about = page == "__about";
+        std::string title = about ? "A PROPOS" : "HA MENU";
+        for (int i = 0; !about && i < id(menu_length); i++) {
           if (!page.empty() && id(menu_ids)[i] == page) {
             title = id(menu_labels)[i];
             break;
           }
         }
-        if (title.size() > 16) title = title.substr(0, 16);
+        if (title.size() > 14) title = title.substr(0, 14);
         it.print(x, 0, id(title_font), title.c_str());
-        it.print(x + 127, 0, id(title_font), TextAlign::TOP_RIGHT,
-                 id(native_api).is_connected_with_state_subscription() ? "ON" : "OFF");
+
+        // Top status: WiFi antenna (left) and Home Assistant house (right).
+        const int w = x + 100;
+        if (id(wifi_node).is_connected()) {
+          it.line(w, 3, w + 4, 1);
+          it.line(w + 4, 1, w + 8, 3);
+          it.line(w + 2, 5, w + 4, 4);
+          it.line(w + 4, 4, w + 6, 5);
+          it.filled_rectangle(w + 4, 7, 1, 1);
+        } else { it.line(w, 1, w + 8, 9); }
+        const int h = x + 116;
+        it.line(h, 4, h + 5, 0);
+        it.line(h + 5, 0, h + 10, 4);
+        it.rectangle(h + 1, 4, 9, 6);
+        if (id(extension_connected).state) it.filled_rectangle(h + 4, 6, 3, 3);
+        else it.line(h + 1, 4, h + 10, 10);
         it.line(x, 13, x + 127, 13);
 
         int child_count = 0;
-        for (int i = 0; i < id(menu_length); i++) {
+        if (!about) for (int i = 0; i < id(menu_length); i++) {
           if (id(menu_parents)[i] == page) child_count++;
         }
-        // A virtual back entry lives at position zero in every submenu.
         const bool has_back = !page.empty();
-        const int total = child_count + (has_back ? 1 : 0);
-        if (total == 0) {
-          it.print(x + 3, 27, id(menu_font), "Aucune entree");
-          return;
-        }
+        // "A propos" is a permanent root entry and doesn't consume menu slots.
+        const int total = about ? 9 : child_count + (has_back ? 1 : 0) + (page.empty() ? 1 : 0);
         const int visible = 4;
         const int start = std::clamp(selection - 1, 0, std::max(0, total - visible));
-        auto draw_row = [&](int position, const std::string &label, bool submenu) {
+        auto draw_row = [&](int position, const std::string &label,
+                            const std::string &state, bool submenu) {
           if (position < start || position >= start + visible) return;
           const int y = 16 + (position - start) * 12;
           const bool selected = (position == selection);
           const auto ink = selected ? COLOR_OFF : COLOR_ON;
           if (selected) it.filled_rectangle(x, y, total > visible ? 124 : 128, 12, COLOR_ON);
-          std::string text = label;
-          if (text.size() > 18) text = text.substr(0, 18);
-          it.print(x + 3, y, id(menu_font), ink, text.c_str());
-          if (submenu) it.print(x + 116, y, id(menu_font), ink, ">");
-        };
-
-        int position = 0;
-        if (has_back) draw_row(position++, "< Retour", false);
-        for (int i = 0; i < id(menu_length); i++) {
-          if (id(menu_parents)[i] != page) continue;
-          bool submenu = false;
-          for (int j = 0; j < id(menu_length); j++) {
-            if (id(menu_parents)[j] == id(menu_ids)[i]) {
-              submenu = true;
-              break;
-            }
+          std::string name = label;
+          if (name.size() > (state.empty() ? 17U : 12U))
+            name = name.substr(0, state.empty() ? 17 : 12);
+          it.print(x + 3, y, id(menu_font), ink, name.c_str());
+          if (submenu) it.print(x + 118, y, id(menu_font), ink, ">");
+          else if (!state.empty()) {
+            std::string short_state = state.substr(0, 6);
+            it.print(x + 121, y, id(menu_font), ink, TextAlign::TOP_RIGHT,
+                     short_state.c_str());
           }
-          draw_row(position++, id(menu_labels)[i], submenu);
+        };
+        if (about) {
+          std::string info[9] = {
+            "< Retour", "FW: ${fw_version}",
+            std::string("WiFi: ") + (id(wifi_node).is_connected() ? "OK" : "OFF"),
+            std::string("SSID: ") + id(device_ssid).state,
+            std::string("IP: ") + id(device_ip).state,
+            std::string("RSSI: ") + (std::isnan(id(wifi_strength).state) ? "?" : std::to_string((int) id(wifi_strength).state)) + "dBm",
+            std::string("HA: ") + (id(extension_connected).state ? "OK" : "OFF"),
+            std::string("Sync: ") + id(extension_last_update).state.substr(0, 12),
+            std::string("Uptime: ") + std::to_string(millis() / 3600000UL) + "h " + std::to_string((millis() / 60000UL) % 60) + "m"
+          };
+          for (int i = 0; i < 9; i++) draw_row(i, info[i], "", false);
+        } else {
+          int pos = 0;
+          if (has_back) draw_row(pos++, "< Retour", "", false);
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != page) continue;
+            bool submenu = false;
+            for (int j = 0; j < id(menu_length); j++) {
+              if (id(menu_parents)[j] == id(menu_ids)[i]) { submenu = true; break; }
+            }
+            draw_row(pos++, id(menu_labels)[i], submenu ? "" : id(menu_states)[i], submenu);
+          }
+          if (page.empty()) draw_row(pos, "A Propos", "", true);
         }
         if (total > visible) {
-          // Fixed track and proportional scroll thumb on the right edge.
-          const int track_height = 48;
-          const int thumb_height = std::max(6, track_height * visible / total);
-          const int thumb_y = 16 + (track_height - thumb_height) * start / (total - visible);
-          it.vertical_line(x + 127, 16, track_height, COLOR_ON);
-          it.filled_rectangle(x + 125, thumb_y, 2, thumb_height, COLOR_ON);
+          const int track = 48;
+          const int thumb = std::max(6, track * visible / total);
+          const int y = 16 + (track - thumb) * start / (total - visible);
+          it.vertical_line(x + 127, 16, track, COLOR_ON);
+          it.filled_rectangle(x + 125, y, 2, thumb, COLOR_ON);
         }
       };
 
@@ -477,22 +586,19 @@ display:
           render_page(id(previous_page), dx, id(previous_cursor));
           render_page(id(current_page), -128 + dx, id(cursor));
         }
-      } else {
-        render_page(id(current_page), 0, id(cursor));
-      }
-
-      // An animated loading bar under the title while HA executes an action.
-      if (!id(pending_item).empty()) {
-        const int x = (int)((now / 9U) % 128U);
-        it.filled_rectangle(x, 14, 18, 1, COLOR_ON);
-      }
+      } else render_page(id(current_page), 0, id(cursor));
 
 interval:
   - interval: 1s
     then:
       - lambda: |-
+          if (id(feedback_mode) >= 2 &&
+              (uint32_t)(millis() - id(feedback_started)) >= 10000U) {
+            id(feedback_mode) = 0;
+          }
           const int timeout = id(sleep_timeout_sec);
           if (!id(screen_sleep) && !id(led_busy) && id(pending_item).empty() &&
+              id(feedback_mode) == 0 &&
               timeout > 0 &&
               (uint32_t)(millis() - id(last_input)) >= (uint32_t)timeout * 1000U) {
             id(screen_sleep) = true;
@@ -519,9 +625,17 @@ script:
             if (!id(led_busy)) id(restore_led).execute();
             return;
           }
-          int children = id(current_page).empty() ? 0 : 1;
-          for (int i = 0; i < id(menu_length); i++) {
-            if (id(menu_parents)[i] == id(current_page)) children++;
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            id(feedback_suppressed) = true;
+            return;
+          }
+          int children = id(current_page).empty() ? 1 :
+                         (id(current_page) == "__about" ? 9 : 1);
+          if (id(current_page) != "__about") {
+            for (int i = 0; i < id(menu_length); i++) {
+              if (id(menu_parents)[i] == id(current_page)) children++;
+            }
           }
           if (children > 0) {
             id(cursor) = (id(cursor) + direction + children) % children;
@@ -541,7 +655,24 @@ script:
             if (!id(led_busy)) id(restore_led).execute();
             return;
           }
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            id(feedback_suppressed) = true;
+            return;
+          }
           if (id(current_page).empty()) return;
+          if (id(current_page) == "__about") {
+            id(previous_page) = "__about";
+            id(previous_cursor) = id(cursor);
+            id(current_page) = "";
+            int count = 0;
+            for (int i = 0; i < id(menu_length); i++)
+              if (id(menu_parents)[i].empty()) count++;
+            id(cursor) = count;
+            id(transition_direction) = -1;
+            id(transition_started) = millis();
+            return;
+          }
           id(previous_page) = id(current_page);
           id(previous_cursor) = id(cursor);
           std::string parent = "";
@@ -580,6 +711,15 @@ script:
             return;
           }
 
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            id(feedback_suppressed) = true;
+            return;
+          }
+          if (id(current_page) == "__about") {
+            if (id(cursor) == 0) id(back_menu).execute();
+            return;
+          }
           if (!id(current_page).empty() && id(cursor) == 0) {
             id(back_menu).execute();
             return;
@@ -600,8 +740,21 @@ script:
               }
             }
             id(pending_item) = id(menu_ids)[i];
+            id(feedback_item) = id(menu_labels)[i];
+            id(feedback_message).clear();
+            id(feedback_suppressed) = false;
+            id(feedback_mode) = 1;
             id(send_selection).execute();
             return;
+          }
+          // Permanent last item in the root menu.
+          if (id(current_page).empty() && child == id(cursor)) {
+            id(previous_page) = "";
+            id(previous_cursor) = id(cursor);
+            id(current_page) = "__about";
+            id(cursor) = 0;
+            id(transition_direction) = 1;
+            id(transition_started) = millis();
           }
 
   - id: send_selection
@@ -624,7 +777,11 @@ script:
                 variables:
                   selected_id: !lambda 'return id(pending_item);'
           else:
-            - lambda: id(pending_item).clear();
+            - lambda: |-
+                id(pending_item).clear();
+                id(feedback_mode) = 3;
+                id(feedback_message) = "HA deconnecte";
+                id(feedback_started) = millis();
             - script.execute: error_led
 
   - id: boot_led
@@ -707,7 +864,13 @@ script:
     mode: restart
     then:
       - delay: 10s
-      - lambda: id(pending_item).clear();
+      - lambda: |-
+          id(pending_item).clear();
+          if (!id(feedback_suppressed)) {
+            id(feedback_mode) = 3;
+            id(feedback_message) = "Delai HA depasse";
+            id(feedback_started) = millis();
+          }
       - script.execute: error_led
 
   - id: success_led

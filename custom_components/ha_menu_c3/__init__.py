@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -111,6 +112,38 @@ class MenuManager:
             )
         await self.hass.services.async_call("esphome", name, data, blocking=True)
 
+    def item_state(self, item: dict) -> str:
+        """Render a short, safe state string for the 128x64 display."""
+        entity_id = item.get("entity_id", "")
+        if not entity_id:
+            return ""
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return "?"
+        if state.state in ("on", "off"):
+            return state.state.upper()
+        if state.state in ("open", "closed", "opening", "closing"):
+            return {"open":"OPEN", "closed":"CLOSED", "opening":"OPENING", "closing":"CLOSING"}[state.state]
+        unit = state.attributes.get("unit_of_measurement", "")
+        text = f"{state.state} {unit}" if unit else str(state.state)
+        return re.sub(r"[\r\n\t]+", " ", text).strip()[:12]
+
+    async def sync_item_states(self, entity_id: str | None = None) -> None:
+        """Send state snapshots; only the affected entity on live updates."""
+        async with self.sync_lock:
+            for slot, item in enumerate(self.config["items"]):
+                if entity_id is not None and item["entity_id"] != entity_id:
+                    continue
+                await self._call_esp("set_menu_status", {
+                    "slot": slot, "status": self.item_state(item),
+                })
+
+    async def _update_item_state_safe(self, entity_id: str) -> None:
+        try:
+            await self.sync_item_states(entity_id)
+        except Exception as err:
+            _LOGGER.debug("Unable to sync item status for %s: %s", entity_id, err)
+
     async def sync(self) -> None:
         """Send every entry in order; set the count last to commit."""
         async with self.sync_lock:
@@ -126,6 +159,10 @@ class MenuManager:
                         "label": item["label"],
                     })
                 await self._call_esp("set_menu_count", {"count": len(items)})
+                for slot, item in enumerate(items):
+                    await self._call_esp("set_menu_status", {
+                        "slot": slot, "status": self.item_state(item),
+                    })
                 await self._call_esp("set_sleep_timeout", {
                     "seconds": self.config["settings"]["sleep_seconds"]
                 })
@@ -190,13 +227,18 @@ class MenuManager:
     async def handle_selection(self, item_id: str) -> None:
         item = next((i for i in self.config["items"] if i["id"] == item_id), None)
         success = False
+        message = "Commande envoyee"
         try:
             if item is None:
                 raise ValueError(f"Unknown menu entry {item_id}")
             if any(i["parent"] == item_id for i in self.config["items"]):
                 raise ValueError("Submenu entry cannot execute an action")
             if not item["service"]:
-                raise ValueError(f"No action configured for {item_id}")
+                raise ValueError("Aucune action configuree")
+            if item["entity_id"]:
+                state = self.hass.states.get(item["entity_id"])
+                if state is None or state.state == "unavailable":
+                    raise ValueError("Entite indisponible")
 
             domain, action = item["service"].split(".", 1)
             if not self.hass.services.has_service(domain, action):
@@ -206,12 +248,13 @@ class MenuManager:
                 service_data["entity_id"] = item["entity_id"]
             await self.hass.services.async_call(domain, action, service_data, blocking=True)
             success = True
-        except Exception:
+        except Exception as err:
+            message = re.sub(r"[\r\n\t]+", " ", str(err)).strip()[:96] or "Echec de l'action"
             _LOGGER.exception("HA Menu C3 action failed for %s", item_id)
         finally:
             try:
                 await self._call_esp("action_result", {
-                    "item_id": item_id, "success": success,
+                    "item_id": item_id, "success": success, "message": message,
                 })
             except Exception as err:
                 _LOGGER.warning("Unable to report action result: %s", err)
@@ -234,8 +277,11 @@ class MenuManager:
 
     @callback
     def on_state(self, event) -> None:
-        if event.data.get("entity_id") == self.config["led"]["entity_id"]:
+        entity_id = event.data.get("entity_id")
+        if entity_id == self.config["led"]["entity_id"]:
             self.hass.async_create_task(self._sync_led_safe())
+        if any(item["entity_id"] == entity_id for item in self.config["items"]):
+            self.hass.async_create_task(self._update_item_state_safe(entity_id))
 
     async def _sync_led_safe(self) -> None:
         try:
@@ -332,7 +378,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         frontend_url_path=PANEL_URL,
         sidebar_title="HA Menu C3",
         sidebar_icon="mdi:gesture-tap-button",
-        module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=2",
+        module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=3",
         require_admin=True,
     )
 
