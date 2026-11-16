@@ -608,7 +608,7 @@ display:
       it.fill(COLOR_OFF);
       if (id(screen_sleep)) return;
       const uint32_t now = millis();
-      // Inverted 11-pixel footer with fixed-width, clipped command slots.
+      // Compact inverse footer with short labels fitted to three slots.
       auto draw_footer = [&](const char *rotate, const char *click, const char *hold) {
         it.filled_rectangle(0, 53, 128, 11, COLOR_ON);
         it.print(2, 55, id(footer_font), COLOR_OFF, "R");
