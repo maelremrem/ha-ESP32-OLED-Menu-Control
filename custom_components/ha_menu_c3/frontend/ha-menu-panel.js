@@ -752,7 +752,7 @@ class HAMenuC3Panel extends HTMLElement {
     const edit=event.target.dataset.edit;
     const item=this.selected;
     if(!item || !edit) return;
-    if(edit === "entity_id") { this.renderEditor(); return; }
+    if(edit === "entity_id") { this.refreshControlOptions(); return; }
     if(edit==="preset") {
       if(event.target.value!=="custom") {
         item.service=event.target.value;
