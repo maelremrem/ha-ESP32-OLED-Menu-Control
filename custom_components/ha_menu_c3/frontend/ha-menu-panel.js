@@ -117,8 +117,14 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   set hass(value) {
+    const entityId = this.selected?.entity_id;
+    const previousState = entityId ? this._hass?.states?.[entityId] : undefined;
     this._hass = value;
     if (this.isConnected && !this.hasLoaded) this.fetch();
+    else if (this.isConnected && this.hasLoaded && entityId &&
+             previousState !== value?.states?.[entityId]) {
+      this.refreshControlOptions();
+    }
   }
   get hass() { return this._hass; }
 
@@ -190,7 +196,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="wrap">
       <div class="top">
         <div>
-          <h1>HA Menu C3</h1>
+          <h1>HA Menu C3 <small class="sub">v0.5.1</small></h1>
           <p class="sub">Menus, actions et LED</p>
         </div>
         <div class="actions">
@@ -338,7 +344,7 @@ class HAMenuC3Panel extends HTMLElement {
           <div class="hint">Exemple : {"brightness_pct": 60}</div>
         </div>
       </div>
-      ${this.renderControlOptions(item, folder)}
+      <div id="control-options">${this.renderControlOptions(item, folder)}</div>
       <div class="small-actions">
         <button class="btn" data-op="add-child" ${this.items.length >= 32 ? "disabled" : ""}>+ Ajouter dans ce menu</button>
         <button class="btn" data-op="move-up">↑ Monter</button>
@@ -349,16 +355,23 @@ class HAMenuC3Panel extends HTMLElement {
     if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
   }
 
+  refreshControlOptions() {
+    const host = this.shadowRoot.querySelector("#control-options");
+    if (host && this.selected) host.innerHTML =
+      this.renderControlOptions(this.selected, this.isFolder(this.selected));
+  }
+
   renderControlOptions(item, folder) {
     if (folder) return "";
-    const domain = (item.entity_id || "").split(".")[0];
-    const live = this._hass?.states?.[item.entity_id];
+    const entityId = (item.entity_id || "").trim();
+    const domain = entityId.split(".")[0];
+    const live = this._hass?.states?.[entityId];
     const attrs = live?.attributes || {};
     const colorModes = attrs.supported_color_modes || [];
     const features = Number(attrs.supported_features || 0);
     const options = {
       light: [
-        ["brightness", "Intensité 0–255", colorModes.some(m => m !== "onoff")],
+        ["brightness", "Intensité (0–100 %)", colorModes.some(m => m !== "onoff")],
         ["color_temp", "Température (K)", colorModes.includes("color_temp")],
         ["color", "Couleur", colorModes.some(m => ["hs","xy","rgb","rgbw","rgbww"].includes(m))],
       ],
@@ -371,9 +384,13 @@ class HAMenuC3Panel extends HTMLElement {
         ["humidifier_mode", "Mode", !!(features & 1) && (attrs.available_modes || []).length > 0],
       ],
     }[domain] || [];
-    if (!options.length) return "";
-    return `<div class="section"><div class="field"><label>Réglages avec l'encodeur</label>
-      <p class="hint">Appui long sur l'OLED pour ouvrir les réglages. Seules les fonctions disponibles sont proposées.</p>
+    if (!options.length) return `<div class="section"><div class="field">
+      <label>Réglages par appui long</label>
+      <p class="hint">Sélectionne une lampe, un thermostat ou un humidificateur pour régler ses paramètres depuis l'OLED.</p>
+    </div></div>`;
+    return `<div class="section"><div class="field"><label>Réglages par appui long</label>
+      <p class="hint">Coche les fonctions à afficher sur l'OLED, puis enregistre le menu. Le clic court garde l'action choisie plus haut.</p>
+      ${!live ? `<p class="hint">Entité introuvable dans les états Home Assistant. Vérifie son identifiant.</p>` : ""}
       <div class="control-list">${options.map(([key,label,supported])=>`<label class="control-check ${supported?"":"unsupported"}">
         <input type="checkbox" data-control="${esc(key)}" ${(item.controls || {})[key] ? "checked" : ""} ${supported ? "" : "disabled"}>
         <span>${esc(label)}${supported ? "" : " · indisponible"}</span>
@@ -714,6 +731,7 @@ class HAMenuC3Panel extends HTMLElement {
     if(item && edit && edit!=="preset" && edit!=="data" && edit!=="parent") {
       item[edit]=event.target.value;
       if(edit==="label") this.renderTree();
+      if(edit==="entity_id") this.refreshControlOptions();
     }
     const led=event.target.dataset.led;
     if(led && this.status) {
@@ -734,7 +752,7 @@ class HAMenuC3Panel extends HTMLElement {
     const edit=event.target.dataset.edit;
     const item=this.selected;
     if(!item || !edit) return;
-    if(edit === "entity_id") { this.renderEditor(); return; }
+    if(edit === "entity_id") { this.refreshControlOptions(); return; }
     if(edit==="preset") {
       if(event.target.value!=="custom") {
         item.service=event.target.value;
