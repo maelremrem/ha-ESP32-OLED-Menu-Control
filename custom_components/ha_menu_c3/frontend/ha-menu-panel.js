@@ -116,13 +116,26 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.addEventListener("dragend", () => this.clearDrag());
   }
 
+  controlCapabilities(hass, entityId) {
+    const state = entityId ? hass?.states?.[entityId] : undefined;
+    if (!state) return "missing";
+    const attrs = state.attributes || {};
+    return JSON.stringify([
+      state.state === "unavailable" ? "unavailable" : "available",
+      attrs.supported_color_modes || [],
+      attrs.supported_features || 0,
+      attrs.hvac_modes || [],
+      attrs.available_modes || [],
+    ]);
+  }
+
   set hass(value) {
     const entityId = this.selected?.entity_id;
-    const previousState = entityId ? this._hass?.states?.[entityId] : undefined;
+    const previous = this.controlCapabilities(this._hass, entityId);
     this._hass = value;
     if (this.isConnected && !this.hasLoaded) this.fetch();
     else if (this.isConnected && this.hasLoaded && entityId &&
-             previousState !== value?.states?.[entityId]) {
+             previous !== this.controlCapabilities(value, entityId)) {
       this.refreshControlOptions();
     }
   }
@@ -196,7 +209,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="wrap">
       <div class="top">
         <div>
-          <h1>HA Menu C3 <small class="sub">v0.5.1</small></h1>
+          <h1>HA Menu C3 <small class="sub">v0.5.2</small></h1>
           <p class="sub">Menus, actions et LED</p>
         </div>
         <div class="actions">
@@ -389,12 +402,14 @@ class HAMenuC3Panel extends HTMLElement {
       <p class="hint">Sélectionne une lampe, un thermostat ou un humidificateur pour régler ses paramètres depuis l'OLED.</p>
     </div></div>`;
     return `<div class="section"><div class="field"><label>Réglages par appui long</label>
-      <p class="hint">Coche les fonctions à afficher sur l'OLED, puis enregistre le menu. Le clic court garde l'action choisie plus haut.</p>
+      <p class="hint">Coche les fonctions voulues et clique sur « Appliquer les réglages ». Le clic court garde l'action ci-dessus.</p>
       ${!live ? `<p class="hint">Entité introuvable dans les états Home Assistant. Vérifie son identifiant.</p>` : ""}
       <div class="control-list">${options.map(([key,label,supported])=>`<label class="control-check ${supported?"":"unsupported"}">
         <input type="checkbox" data-control="${esc(key)}" ${(item.controls || {})[key] ? "checked" : ""} ${supported ? "" : "disabled"}>
         <span>${esc(label)}${supported ? "" : " · indisponible"}</span>
-      </label>`).join("")}</div></div></div>`;
+      </label>`).join("")}</div>
+      <button type="button" class="btn" data-op="apply-controls" style="margin-top:10px">Appliquer les réglages</button>
+    </div></div>`;
   }
 
   renderEntityResults(query="") {
@@ -680,7 +695,7 @@ class HAMenuC3Panel extends HTMLElement {
     const btn=event.target.closest("[data-op]");
     if(btn) {
       const op=btn.dataset.op;
-      if(op==="save") return this.save();
+      if(op==="save" || op==="apply-controls") return this.save();
       if(op==="sync") return this.sync();
       if(op==="identify") return this.identify();
       if(op==="refresh") return this.refresh();
@@ -717,6 +732,10 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onInput(event) {
+    if (event.target.dataset.control && this.selected) {
+      this.setControl(event.target.dataset.control, event.target.checked);
+      return;
+    }
     if (event.target.dataset.entitySearch) this.renderEntityResults(event.target.value);
     const setting = event.target.dataset.setting;
     if (setting && this.status) {
@@ -739,10 +758,18 @@ class HAMenuC3Panel extends HTMLElement {
     }
   }
 
+  setControl(key, checked) {
+    const item = this.selected;
+    if (!item) return;
+    item.controls ||= {};
+    if (checked) item.controls[key] = true;
+    else delete item.controls[key];
+    this.show("Réglages modifiés. Clique sur Appliquer les réglages pour envoyer à l'ESP32.");
+  }
+
   onChange(event) {
     if (event.target.dataset.control && this.selected) {
-      this.selected.controls ||= {};
-      this.selected.controls[event.target.dataset.control] = event.target.checked;
+      this.setControl(event.target.dataset.control, event.target.checked);
       return;
     }
     if (event.target.dataset.devicePicker) {
