@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.2"
+  fw_version: "0.5.3"
 
 esphome:
   name: ${device_name}
@@ -11,25 +11,9 @@ esphome:
     priority: -10
     then:
       - lambda: |-
-          // Demo menu; Home Assistant can replace it at runtime.
-          id(menu_ids)[0] = "lights";
-          id(menu_labels)[0] = "Eclairage";
-          id(menu_parents)[0] = "";
-          id(menu_ids)[1] = "night";
-          id(menu_labels)[1] = "Mode nuit";
-          id(menu_parents)[1] = "";
-          id(menu_ids)[2] = "garage";
-          id(menu_labels)[2] = "Garage";
-          id(menu_parents)[2] = "";
-          id(menu_ids)[3] = "salon";
-          id(menu_labels)[3] = "Salon";
-          id(menu_parents)[3] = "lights";
-          id(menu_ids)[4] = "kitchen";
-          id(menu_labels)[4] = "Cuisine";
-          id(menu_parents)[4] = "lights";
-          id(menu_length) = 5;
+          id(menu_length) = 0;
+          id(menu_synced) = false;
           id(last_input) = millis();
-          id(boot_started) = millis();
       - script.execute: boot_led
 
 esp32:
@@ -228,6 +212,8 @@ api:
         - lambda: |-
             id(last_extension_seen) = millis();
             id(extension_last_update).publish_state(last_update.substr(0, 48));
+            // Final commit: all menu data and options have been sent by HA.
+            id(menu_synced) = true;
 
     - action: extension_heartbeat
       description: Keep the integration connectivity diagnostic current
@@ -390,6 +376,9 @@ globals:
   - id: menu_length
     type: int
     initial_value: '0'
+  - id: menu_synced
+    type: bool
+    initial_value: 'false'
   - id: current_page
     type: std::string
     initial_value: '""'
@@ -416,9 +405,6 @@ globals:
     initial_value: '0'
   - id: transition_direction
     type: int
-    initial_value: '0'
-  - id: boot_started
-    type: uint32_t
     initial_value: '0'
   - id: press_start
     type: uint32_t
@@ -620,10 +606,22 @@ display:
         it.print(87, 55, id(footer_font), COLOR_OFF, "L");
         it.print(97, 55, id(footer_font), COLOR_OFF, hold);
       };
-      if ((uint32_t)(now - id(boot_started)) < 750) {
-        it.print(19, 13, id(menu_font), "HA MENU C3");
-        it.line(16, 34, 111, 34);
-        it.filled_rectangle(16, 40, ((now - id(boot_started)) * 96U) / 750U, 3);
+      // Display only after the integration commits a full sync.
+      if (!id(menu_synced)) {
+        it.print(64, 2, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "CONNEXION");
+        const int8_t dx[8] = {0, 7, 10, 7, 0, -7, -10, -7};
+        const int8_t dy[8] = {-10, -7, 0, 7, 10, 7, 0, -7};
+        const int head = static_cast<int>((now / 120U) % 8U);
+        for (int i = 0; i < 8; i++) {
+          const int trail = (head + 8 - i) % 8;
+          const int size = trail == 0 ? 5 : (trail <= 2 ? 3 : (trail <= 4 ? 2 : 0));
+          if (size == 0) continue;
+          it.filled_rectangle(64 + dx[i] - size / 2,
+                              26 + dy[i] - size / 2,
+                              size, size, COLOR_ON);
+        }
+        it.print(64, 43, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "En attente de");
+        it.print(64, 54, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "Home Assistant");
         return;
       }
 
@@ -879,7 +877,7 @@ interval:
             id(feedback_mode) = 0;
           }
           const int timeout = id(sleep_timeout_sec);
-          if (!id(screen_sleep) && !id(led_busy) && id(pending_item).empty() &&
+          if (id(menu_synced) && !id(screen_sleep) && !id(led_busy) && id(pending_item).empty() &&
               id(feedback_mode) == 0 &&
               timeout > 0 &&
               (uint32_t)(millis() - id(last_input)) >= (uint32_t)timeout * 1000U) {
@@ -917,6 +915,7 @@ script:
       direction: int
     then:
       - lambda: |-
+          if (!id(menu_synced)) return;
           const uint32_t now = millis();
           // Guard against mechanical bounce; tune encoder_debounce_ms.
           if ((uint32_t)(now - id(last_encoder_step)) < ${encoder_debounce_ms}) return;
@@ -1051,6 +1050,7 @@ script:
     mode: restart
     then:
       - lambda: |-
+          if (!id(menu_synced)) return;
           bool was_asleep = id(screen_sleep);
           id(screen_sleep) = false;
           id(last_input) = millis();
@@ -1115,6 +1115,7 @@ script:
     mode: restart
     then:
       - lambda: |-
+          if (!id(menu_synced)) return;
           const uint32_t now = millis();
           const bool was_asleep = id(screen_sleep);
           id(last_input) = now;
