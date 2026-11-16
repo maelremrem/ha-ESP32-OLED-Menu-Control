@@ -46,6 +46,8 @@ assert.match(container.innerHTML, /data-control="color"/);
 assert.doesNotMatch(container.innerHTML, /data-control="brightness"[^>]*disabled/);
 panel.onChange({ target: { dataset: { control: 'brightness' }, checked: true } });
 assert.equal(item.controls.brightness, true);
+panel.onInput({ target: { dataset: { control: 'color_temp' }, checked: true } });
+assert.equal(item.controls.color_temp, true, 'checkbox input commits even before change event');
 
 panel.hasLoaded = true;
 panel.isConnected = true;
@@ -55,9 +57,36 @@ panel.hass = { states: {
 assert.match(container.innerHTML, /Intensité \(0–100 %\)/);
 assert.match(container.innerHTML, /indisponible/);
 
+// Frequent HA state updates must not replace the checkbox DOM while editing.
+panel.refreshControlOptions();
+container.innerHTML = 'SENTINEL';
+panel.hass = { states: {
+  'light.tower_leds_bureau': { state: 'off', attributes: { supported_color_modes: ['onoff'], brightness: 10 } },
+} };
+assert.equal(container.innerHTML, 'SENTINEL', 'unchanged capabilities must not rebuild checkboxes');
+assert.equal(item.controls.brightness, true);
+assert.equal(item.controls.color_temp, true);
+
 panel.onInput({ target: {
   dataset: { edit: 'entity_id', entitySearch: 'true' },
   value: 'light.missing_bureau',
 } });
 assert.match(container.innerHTML, /Entité introuvable/);
-console.log('Panel advanced control tests passed');
+
+// Restoring the original entity keeps selected options on Save.
+item.entity_id = 'light.tower_leds_bureau';
+panel.deviceId = 'device-a';
+panel.commitEditor = () => true;
+panel.render = () => {};
+panel.call = async (type, data) => {
+  assert.equal(type, 'ha_menu_c3/save');
+  assert.equal(data.entry_id, 'device-a');
+  assert.equal(data.config.items[0].controls.brightness, true);
+  assert.equal(data.config.items[0].controls.color_temp, true);
+  return { entry_id: 'device-a', config: data.config, devices: [], sync: 'ok' };
+};
+(async () => {
+  await panel.save();
+  assert.equal(item.controls.brightness, true);
+  console.log('Panel advanced control tests passed');
+})().catch(err => { console.error(err); process.exitCode = 1; });
