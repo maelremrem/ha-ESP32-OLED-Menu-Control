@@ -49,12 +49,12 @@ Use 3.3 V for OLED/encoder and 5 V for the LED, with a common ground. A logic-le
 - Current HA entity states appear beside menu entries. The header has separate Wi-Fi and HA connection icons.
 - A completed service call displays a checkmark drawn in the center; failures display a drawn cross and a short error. Results close after 10 seconds or any encoder input. **A check means Home Assistant accepted the service call**, not that a physical device necessarily reached its target state.
 - The OLED displays light brightness as **0–100%** in 5% encoder steps while keeping Home Assistant's 0–255 brightness service values internally.
-- The footer shows context-sensitive controls: `R` = rotate, `C` = click, `L` = long press. Three menu rows remain visible above it; other entries scroll normally.
+- The OLED footer uses a dedicated 8-pixel font and a high-contrast strip, with context-specific shortcuts: **R** rotate, **C** click, **L** long press. `NAV` navigate, `OUV` open, `ACT` activate, `REGL` adjust/open settings, `MOD` edit, `FIN` finish, `RET` back, `ANN` cancel, `FERM` dismiss. `--` means the control has no action on that screen. Three menu rows remain visible above it; other entries scroll normally.
 - The RGB LED shows a persistent status color and temporary animations. OLED and LED share a configurable sleep timer.
 
 ## Diagnostics
 
-Open **Réglages et état** in the sidebar panel for Wi-Fi RSSI, SSID, IP, uptime, HA connection and last sync. The panel refreshes automatically every 15 seconds. Firmware **0.5.1** sends diagnostic updates directly on integration heartbeat; it also exposes regular ESPHome entities. Previous firmware may require enabling its diagnostics entities in Home Assistant.
+Open **Réglages et état** in the sidebar panel for Wi-Fi RSSI, SSID, IP, uptime, HA connection and last sync. The panel refreshes automatically every 15 seconds. Firmware **0.5.2** sends diagnostic updates directly on integration heartbeat; it also exposes regular ESPHome entities. Previous firmware may require enabling its diagnostics entities in Home Assistant.
 
 The menu and settings are saved by HA. The ESP32 uses RAM for the menu and restores it from HA when connected. There are up to 32 configurable entries and 8 levels. Each device requires a unique `esphome.name`. Sensitive actions such as locks or garages currently execute without an on-screen confirmation.
 
