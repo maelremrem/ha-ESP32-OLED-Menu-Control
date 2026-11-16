@@ -24,4 +24,10 @@ assert.equal(panel.moveTreeItem('a','e','inside'),false,'cannot drop onto action
 assert.equal(panel.moveTreeItem('d','','root'),true);
 assert.deepEqual(Array.from(panel.items, i=>i.id),['b','c','a','e','d']);
 assert.equal(panel.items.find(i=>i.id==='d').parent,'');
+assert.equal(panel.indentItem('e'),true);
+assert.equal(panel.items.find(i=>i.id==='e').parent,'a');
+assert.equal(panel.outdentItem('e'),true);
+assert.equal(panel.items.find(i=>i.id==='e').parent,'');
+assert.equal(panel.outdentItem('e'),false, 'root cannot outdent');
+assert.equal(panel.indentItem('b'),false, 'first root cannot indent');
 console.log('Drag tree tests passed');
