@@ -72,6 +72,11 @@ const STYLES = `
   .diagnostics { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
   .diagnostic { border:1px solid var(--divider-color); border-radius:10px; padding:12px; min-width:0; }
   .diagnostic strong { display:block; margin-top:3px; overflow-wrap:anywhere; }
+  .device-picker { display:flex; gap:7px; align-items:center; min-width:230px; font-size:13px; }
+  .device-picker select { min-width:180px; max-width:300px; background:var(--card-background-color); }
+  .diagnostic small { display:block; margin-top:5px; font-size:11px; color:var(--secondary-text-color); overflow-wrap:anywhere; }
+  .diagnostic.missing { opacity:.75; }
+
   @media(max-width:790px) { .wrap{padding:12px;} .columns{grid-template-columns:1fr;} h1{font-size:23px;} .form-grid{grid-template-columns:1fr;} }
 `;
 
@@ -83,6 +88,9 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.addEventListener("input", (event) => this.onInput(event));
     this.shadowRoot.addEventListener("change", (event) => this.onChange(event));
     this.status = null;
+    this.deviceId = null;
+    this.devices = [];
+    this.savedConfig = null;
     this.selectedId = null;
     this.activeTab = "menus";
     this.notice = "";
@@ -109,6 +117,13 @@ class HAMenuC3Panel extends HTMLElement {
   connectedCallback() {
     this.render();
     if (this._hass && !this.hasLoaded) this.fetch();
+    this._refreshTimer = setInterval(() => {
+      if (this.isConnected && this.activeTab === "config" && this.status && !this.busy) this.refresh();
+    }, 15000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._refreshTimer);
   }
 
   async call(type, extra={}) {
@@ -124,18 +139,36 @@ class HAMenuC3Panel extends HTMLElement {
     this.renderNotice();
   }
 
-  async fetch() {
-    if (this.hasLoaded || !this._hass) return;
-    this.hasLoaded = true;
+  async fetch(deviceId=this.deviceId) {
+    if (!this._hass) return;
+    this.busy = true;
     try {
-      this.status = await this.call("ha_menu_c3/get");
-      this.status.config = clone(this.status.config);
+      const status = await this.call("ha_menu_c3/get", deviceId ? {entry_id:deviceId} : {});
+      this.status = status;
+      this.status.config = clone(status.config);
+      this.deviceId = status.entry_id;
+      this.devices = status.devices || [];
+      this.savedConfig = JSON.stringify(status.config);
+      this.selectedId = null;
+      this.notice = "";
+      this.hasLoaded = true;
       this.render();
     } catch (err) {
-      this.hasLoaded = false;
-      this.render();
-      this.show(`Impossible de charger l'intégration : ${err.message || err}`, "error");
+      if (!this.status) this.hasLoaded = false;
+      this.show(`Chargement impossible : ${err.message || err}`, "error");
+    } finally { this.busy = false; }
+  }
+
+  async selectDevice(nextId) {
+    if (!nextId || nextId === this.deviceId || this.busy) return;
+    if (!this.commitEditor()) return this.render();
+    if (this.savedConfig && JSON.stringify(this.status.config) !== this.savedConfig &&
+        !window.confirm("Les modifications non enregistrées seront perdues. Changer d'appareil ?")) {
+      const picker = this.shadowRoot.querySelector("[data-device-picker]");
+      if (picker) picker.value = this.deviceId;
+      return;
     }
+    await this.fetch(nextId);
   }
 
   get items() { return this.status?.config?.items || []; }
@@ -145,24 +178,30 @@ class HAMenuC3Panel extends HTMLElement {
   render() {
     const count = this.items.length;
     const sync = this.status?.sync || "not_synced";
-    const badge = sync === "ok" ? "Synchronisé" : sync === "error" ? "Hors ligne / erreur" : "Non synchronisé";
+    const badge = sync === "ok" ? "Synchronisé" : sync === "error" ? "Hors ligne" : "Non synchronisé";
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="wrap">
       <div class="top">
         <div>
           <h1>HA Menu C3</h1>
-          <p class="sub">Configuration des menus, actions et couleurs de la LED · <b>${esc(this.status?.device || "ha-menu-c3")}</b></p>
+          <p class="sub">Menus, actions et LED</p>
         </div>
         <div class="actions">
+          <label class="device-picker">Appareil
+            <select data-device-picker="true" aria-label="Appareil ESPHome">
+              ${(this.devices.length ? this.devices : [{entry_id:this.deviceId || "", name:this.status?.device || "ha-menu-c3"}])
+                .map(d=>`<option value="${esc(d.entry_id)}" ${d.entry_id === this.deviceId ? "selected" : ""}>${esc(d.name)}</option>`).join("")}
+            </select>
+          </label>
           <span class="pill ${esc(sync)}">${badge}</span>
-          <button class="btn" data-op="identify">◉ Identifier</button>
+          <button class="btn" data-op="identify">Identifier</button>
           <button class="btn" data-op="sync">↻ Synchroniser</button>
           <button class="btn primary" data-op="save">Enregistrer</button>
         </div>
       </div>
       <div id="notice-host"></div>
       <nav class="tabs">
-        <button class="btn tab ${this.activeTab === "menus" ? "active" : ""}" data-tab="menus">☰ Menus</button>
-        <button class="btn tab ${this.activeTab === "config" ? "active" : ""}" data-tab="config">⚙ Configuration & diagnostics</button>
+        <button class="btn tab ${this.activeTab === "menus" ? "active" : ""}" data-tab="menus">Menus</button>
+        <button class="btn tab ${this.activeTab === "config" ? "active" : ""}" data-tab="config">Réglages et état</button>
       </nav>
       ${this.activeTab === "menus" ? `
       <div class="columns">
@@ -173,7 +212,7 @@ class HAMenuC3Panel extends HTMLElement {
             <button class="btn" data-op="add-root" ${count >= 32 ? "disabled" : ""}>+ Entrée</button>
             <button class="btn" data-op="add-folder" ${count >= 32 ? "disabled" : ""}>+ Sous-menu</button>
           </div>
-          <p class="hint meta">Glisse les lignes pour les réordonner. Dépose en haut/bas pour changer l'ordre, au centre d'un sous-menu pour y déplacer l'entrée. Sur mobile, conserve les flèches et le champ « Menu parent ». L'entrée « À propos » est toujours en dernier.</p>
+          <p class="hint meta">Glisser : réordonner ou déplacer dans un sous-menu. « À propos » reste en dernier.</p>
         </section>
         <div>
           <section class="panel"><div class="panel-head"><h2>Éditeur d'entrée</h2></div><div id="editor"></div></section>
@@ -181,12 +220,12 @@ class HAMenuC3Panel extends HTMLElement {
         </div>
       </div>` : `
       <section class="panel">
-        <h2>Configuration du contrôleur</h2>
+        <h2>Réglages</h2>
         <div id="settings"></div>
-        <div class="small-actions"><button class="btn" data-op="identify">◉ Identifier le contrôleur</button></div>
+        <div class="small-actions"><button class="btn" data-op="identify">Identifier (LED violette)</button></div>
       </section>
       <section class="panel" style="margin-top:16px">
-        <div class="panel-head"><h2>Diagnostics</h2><button class="btn" data-op="refresh">↻ Actualiser</button></div>
+        <div class="panel-head"><h2>État de l'appareil</h2><button class="btn" data-op="refresh">↻ Actualiser</button></div>
         <div id="diagnostics"></div>
       </section>`}
     </div>`;
@@ -236,7 +275,7 @@ class HAMenuC3Panel extends HTMLElement {
     if (!host) return;
     const item = this.selected;
     if (!item) {
-      host.innerHTML = `<div class="empty">Clique sur une entrée pour configurer son intitulé, l'action Home Assistant et sa position.</div>`;
+      host.innerHTML = `<div class="empty">Sélectionne une entrée.</div>`;
       return;
     }
     const folder = this.isFolder(item);
@@ -250,7 +289,7 @@ class HAMenuC3Panel extends HTMLElement {
         <div class="field"><label>Nom affiché sur l'OLED</label><input data-edit="label" maxlength="64" value="${esc(item.label)}"></div>
         <div class="field"><label>Menu parent</label><select data-edit="parent">${parentChoices}</select></div>
       </div>
-      <div class="field"><label>Identifiant (stable)</label><input value="${esc(item.id)}" disabled><div class="hint">Référence utilisée par l'ESP32. Elle reste identique après un renommage.</div></div>
+      <div class="field"><label>Identifiant (stable)</label><input value="${esc(item.id)}" disabled><div class="hint">Identifiant conservé si le nom change.</div></div>
       <div class="section">
         <div class="field">
           <label>Action Home Assistant</label>
@@ -275,10 +314,10 @@ class HAMenuC3Panel extends HTMLElement {
         <div class="field"><label>Entité cible</label>
           <input data-edit="entity_id" data-entity-search="true" autocomplete="off" value="${esc(item.entity_id)}" placeholder="Rechercher par nom ou identifiant (ex : prise, salon...)" ${folder ? "disabled" : ""}>
           <div id="entity-results"></div>
-          <div class="hint">Recherche dans le nom et l'identifiant. Les prises électriques (switch) sont incluses. Pour les appareils exposés comme lumière, utilise « Basculer une entité (universel) ».</div>
+          <div class="hint">Recherche par nom ou ID, prises incluses.</div>
         </div>
         <div class="field"><label>Données supplémentaires (JSON facultatif)</label><textarea data-edit="data" spellcheck="false" ${folder ? "disabled" : ""}>${esc(this.editJson)}</textarea>
-          <div class="hint">Exemple : {"brightness_pct": 60}. Utile pour les actions avancées.</div>
+          <div class="hint">Exemple : {"brightness_pct": 60}</div>
         </div>
       </div>
       <div class="small-actions">
@@ -320,30 +359,42 @@ class HAMenuC3Panel extends HTMLElement {
     if (!host || !this.status) return;
     const seconds = this.status.config.settings?.sleep_seconds ?? 30;
     host.innerHTML = `<div class="field" style="max-width:340px">
-      <label>Veille OLED et LED RGB (secondes)</label>
+      <label>Veille écran et LED (secondes)</label>
       <input type="number" min="0" max="3600" step="1" data-setting="sleep_seconds" value="${esc(seconds)}">
-      <div class="hint">0 désactive la mise en veille. La LED reprend son état permanent au réveil. Les animations d'identification restent disponibles pendant la veille.</div>
+      <div class="hint">0 : toujours allumés. La LED retrouve sa couleur au réveil.</div>
     </div>`;
   }
 
   renderDiagnostics() {
     const host = this.shadowRoot.querySelector("#diagnostics");
     if (!host || !this.status) return;
-    const d = this.status.diagnostics || {};
-    const value = (key, fallback="Non disponible") => d[key]?.state && !["unknown","unavailable"].includes(d[key].state)
-      ? `${d[key].state}${d[key].unit ? " " + d[key].unit : ""}` : fallback;
-    const uptime = d.uptime?.state && Number.isFinite(Number(d.uptime.state)) ?
-      `${Math.floor(Number(d.uptime.state)/3600)} h ${Math.floor((Number(d.uptime.state)%3600)/60)} min` : "Non disponible";
-    const cells = [
-      ["Wi-Fi (RSSI)", value("wifi")],
-      ["Uptime", uptime],
-      ["Adresse IP", value("ip")],
-      ["Connexion extension", d.extension_connected?.state === "on" ? "Connectée" : this.status.extension_online ? "Connectée (HA)" : "Déconnectée"],
-      ["Dernière mise à jour", value("extension_update", this.status.last_sync_at || "Jamais")],
-      ["Synchronisation", this.status.sync === "ok" ? "OK" : this.status.error || "En attente"],
+    const data = this.status.diagnostics || {};
+    const read = (key, fallback="—") => {
+      const state = data[key]?.state;
+      return state !== undefined && state !== null && state !== "" &&
+        !["unknown", "unavailable"].includes(String(state).toLowerCase())
+        ? `${state}${data[key].unit ? " " + data[key].unit : ""}` : fallback;
+    };
+    const uptime = Number(data.uptime?.state);
+    const duration = data.uptime?.state !== undefined && data.uptime?.state !== null &&
+      Number.isFinite(uptime) && uptime >= 0
+      ? `${Math.floor(uptime/3600)} h ${Math.floor(uptime%3600/60)} min`
+      : read("uptime");
+    const connected = !!this.status.extension_online;
+    const rows = [
+      ["Wi-Fi", read("wifi")],
+      ["Réseau", read("ssid")],
+      ["Adresse IP", read("ip")],
+      ["Depuis le démarrage", duration],
+      ["Connexion HA", connected ? "Connecté" : "Déconnecté"],
+      ["Dernière synchro", read("extension_update", this.status.last_sync_at || "—")],
+      ["Menu", this.status.sync === "ok" ? "À jour" : this.status.sync === "syncing" ? "En cours" : "Non synchronisé"],
     ];
-    host.innerHTML = `<div class="diagnostics">${cells.map(([key,val]) => `<div class="diagnostic"><span class="sub">${esc(key)}</span><strong>${esc(val)}</strong></div>`).join("")}</div>
-      <p class="hint meta">Les diagnostics du C3 deviennent disponibles après le flash du firmware V5. Ils apparaissent aussi comme entités de diagnostic dans Home Assistant.</p>`;
+    const missing = rows.filter(([,value])=>value==="—").length;
+    host.innerHTML = `<div class="diagnostics">${rows.map(([key,val])=>
+      `<div class="diagnostic ${val==="—" ? "missing" : ""}"><span class="sub">${esc(key)}</span><strong>${esc(val)}</strong></div>`).join("")}</div>
+      ${missing ? `<p class="hint meta">Certaines données manquent. Vérifie les entités de diagnostic ESPHome et flashe le firmware 0.4 pour la remontée directe.</p>` : ""}
+      ${this.status.error ? `<p class="notice error">${esc(this.status.error)}</p>` : ""}`;
   }
 
   renderLed() {
@@ -357,7 +408,7 @@ class HAMenuC3Panel extends HTMLElement {
       <div class="led-grid">
         <div class="field"><label>Couleur active</label><input type="color" data-led="on" value="${rgbHex(led.on)}"></div>
         <div class="field"><label>Couleur inactive</label><input type="color" data-led="off" value="${rgbHex(led.off)}"></div>
-      </div><div class="hint">Les animations temporaires bleu/vert/rouge sont gérées directement par le firmware V5 et reviennent ensuite à cette couleur permanente.</div>`;
+      </div><div class="hint">La LED revient à cette couleur après une animation.</div>`;
   }
 
   isDescendant(candidate, ancestor) {
@@ -384,7 +435,7 @@ class HAMenuC3Panel extends HTMLElement {
     }
     this.selectedId = uid;
     this.renderTree(); this.renderEditor();
-    this.show("Entrée ajoutée localement. Clique sur Enregistrer pour l'envoyer au C3.");
+    this.show("Entrée ajoutée. Pense à enregistrer.");
   }
 
   moveSelected(dir) {
@@ -496,7 +547,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.status.config.items = result;
     this.selectedId = sourceId;
     this.renderTree(); this.renderEditor();
-    this.show("Arborescence modifiée. Clique sur Enregistrer pour synchroniser le C3.");
+    this.show("Ordre modifié. Pense à enregistrer.");
     return true;
   }
 
@@ -520,7 +571,9 @@ class HAMenuC3Panel extends HTMLElement {
     if (tab) {
       if (this.activeTab === "menus" && !this.commitEditor()) return;
       this.activeTab = tab.dataset.tab;
-      return this.render();
+      this.render();
+      if (this.activeTab === "config") this.refresh();
+      return;
     }
     const entityOption = event.target.closest("[data-entity-select]");
     if (entityOption && this.selected) {
@@ -592,6 +645,10 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onChange(event) {
+    if (event.target.dataset.devicePicker) {
+      this.selectDevice(event.target.value);
+      return;
+    }
     const edit=event.target.dataset.edit;
     const item=this.selected;
     if(!item || !edit) return;
@@ -620,9 +677,11 @@ class HAMenuC3Panel extends HTMLElement {
     if(!this.commitEditor()) return;
     this.busy=true; this.show("Enregistrement et synchronisation en cours...");
     try {
-      const res=await this.call("ha_menu_c3/save",{config:this.status.config});
+      const res=await this.call("ha_menu_c3/save",{entry_id:this.deviceId,config:this.status.config});
       this.status=res;
+      this.devices=res.devices || this.devices;
       this.status.config=clone(res.config);
+      this.savedConfig=JSON.stringify(res.config);
       this.show(res.sync==="ok" ? `Configuration enregistrée : ${this.items.length} entrées synchronisées.`
         : `Configuration enregistrée dans Home Assistant, mais synchronisation impossible : ${res.error}`, res.sync==="ok"?"success":"error");
       this.render();
@@ -635,8 +694,11 @@ class HAMenuC3Panel extends HTMLElement {
     if(this.busy || !this.status) return;
     this.busy=true;this.show("Synchronisation ESPHome...");
     try {
-      const res=await this.call("ha_menu_c3/sync");
+      const res=await this.call("ha_menu_c3/sync",{entry_id:this.deviceId});
       this.status.sync=res.sync;this.status.error=res.error;
+      this.status.last_sync_at=res.last_sync_at;
+      this.status.diagnostics=res.diagnostics;
+      this.devices=res.devices || this.devices;
       this.show(res.sync==="ok"?"Menu envoyé à l'ESP32.":`Synchronisation impossible : ${res.error}`,res.sync==="ok"?"success":"error");
       this.render();
     } catch(err) {this.show(`Erreur : ${err.message || err}`,"error");}
@@ -646,13 +708,14 @@ class HAMenuC3Panel extends HTMLElement {
   async refresh() {
     if (this.busy) return;
     try {
-      const remote = await this.call("ha_menu_c3/get");
+      const remote = await this.call("ha_menu_c3/get",{entry_id:this.deviceId});
       // Keep unsaved local edits; refresh only live status and diagnostics.
       this.status.sync = remote.sync;
       this.status.error = remote.error;
       this.status.last_sync_at = remote.last_sync_at;
       this.status.extension_online = remote.extension_online;
       this.status.diagnostics = remote.diagnostics;
+      this.devices = remote.devices || this.devices;
       this.renderDiagnostics();
       this.renderNotice();
     } catch(err) { this.show(`Diagnostics indisponibles : ${err.message || err}`, "error"); }
@@ -660,8 +723,8 @@ class HAMenuC3Panel extends HTMLElement {
 
   async identify() {
     try {
-      await this.call("ha_menu_c3/identify");
-      this.show("Animation violette demandée au C3.","success");
+      await this.call("ha_menu_c3/identify",{entry_id:this.deviceId});
+      this.show("Identification lancée.","success");
     } catch(err) {this.show(`Identification impossible : ${err.message || err}`,"error");}
   }
 }
