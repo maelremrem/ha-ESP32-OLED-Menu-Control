@@ -1,0 +1,25 @@
+const fs = require('fs');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const source = fs.readFileSync(__dirname+'/../custom_components/ha_menu_c3/frontend/ha-menu-panel.js','utf8');
+const ctx = { HTMLElement: class { attachShadow() {this.shadowRoot={addEventListener(){}};return this.shadowRoot;} }, customElements:{get(){return null;},define(){}}, console };
+vm.createContext(ctx);
+vm.runInContext(source+'\nthis.Panel = HAMenuC3Panel;',ctx);
+(async()=>{
+  const panel = new ctx.Panel();
+  let calls = [];
+  panel._hass = {};
+  panel.render=()=>{};panel.renderNotice=()=>{};panel.renderDiagnostics=()=>{};panel.show=()=>{};panel.commitEditor=()=>true;
+  panel.call=async(type,data)=>{calls.push({type,data});return {entry_id:data.entry_id||'a',device:data.entry_id==='b'?'node-b':'node-a',config:{items:[],settings:{sleep_seconds:30},led:{}}, devices:[{entry_id:'a',name:'node-a'},{entry_id:'b',name:'node-b'}],sync:'ok'};};
+  await panel.fetch();
+  assert.equal(panel.deviceId,'a');
+  await panel.selectDevice('b');
+  assert.equal(panel.deviceId,'b');
+  assert.equal(calls.at(-1).data.entry_id,'b');
+  await panel.save();
+  assert.equal(calls.at(-1).type,'ha_menu_c3/save');
+  assert.equal(calls.at(-1).data.entry_id,'b');
+  await panel.identify();
+  assert.equal(calls.at(-1).data.entry_id,'b');
+  console.log('Multi-device panel tests passed');
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.3.0"
+  fw_version: "0.4.0"
 
 esphome:
   name: ${device_name}
@@ -54,7 +54,7 @@ api:
       - homeassistant.event:
           event: esphome.ha_menu_ready
           data:
-            device: ha-menu-c3
+            device: ${device_name}
   actions:
     - action: set_menu_item
       description: Add or update a menu entry at a given position
@@ -150,6 +150,7 @@ api:
       description: Keep the integration connectivity diagnostic current
       then:
         - lambda: id(last_extension_seen) = millis();
+        - script.execute: send_diagnostics
 
     - action: action_result
       description: Report success or failure of a selected menu action
@@ -396,7 +397,7 @@ number:
       - homeassistant.event:
           event: esphome.ha_menu_sleep_changed
           data:
-            device: ha-menu-c3
+            device: ${device_name}
           data_template:
             seconds: "{{ sleep_time }}"
           variables:
@@ -454,33 +455,44 @@ display:
           it.print(4, 24, id(menu_font), "Commande envoyee...");
           it.filled_rectangle((now / 9U) % 118U, 52, 10, 3);
         } else {
-          const bool ok = (mode == 2);
+          const bool ok = mode == 2;
+          const uint32_t elapsed = (uint32_t)(now - id(feedback_started));
+          // Grow the center ring, then draw the check/cross in two strokes.
+          const int radius = std::clamp((int)(elapsed / 14U), 1, 15);
+          it.circle(64, 20, radius, COLOR_ON);
+          auto stroke = [&](int x1, int y1, int x2, int y2, uint32_t start_ms) {
+            const int step = std::clamp((int)elapsed - (int)start_ms, 0, 180);
+            if (step == 0) return;
+            const int ex = x1 + (x2 - x1) * step / 180;
+            const int ey = y1 + (y2 - y1) * step / 180;
+            it.line(x1, y1, ex, ey, COLOR_ON);
+          };
           if (ok) {
-            it.line(10, 20, 21, 31);
-            it.line(21, 31, 40, 11);
-            it.line(11, 20, 21, 30);
-            it.line(21, 30, 39, 12);
+            stroke(56, 20, 62, 26, 160);
+            stroke(62, 26, 74, 13, 340);
+            it.print(64, 43, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "TERMINE");
+            if (!id(feedback_item).empty())
+              it.print(64, 55, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                       id(feedback_item).substr(0, 18).c_str());
           } else {
-            it.line(14, 13, 36, 35);
-            it.line(36, 13, 14, 35);
-            it.line(15, 13, 37, 35);
-            it.line(37, 13, 15, 35);
-          }
-          it.print(47, 6, id(title_font), ok ? "ENVOYEE" : "ERREUR");
-          it.print(47, 20, id(title_font), id(feedback_item).substr(0, 12).c_str());
-          std::string msg = id(feedback_message);
-          if (msg.empty()) msg = ok ? "Commande envoyee" : "Echec de l'action";
-          // Up to two wrapped lines for the error or success explanation.
-          int offset = 0;
-          for (int line = 0; line < 2 && offset < (int)msg.size(); line++) {
-            int take = std::min(20, (int)msg.size() - offset);
-            if (offset + take < (int)msg.size()) {
-              int space = (int)msg.rfind(' ', offset + take - 1);
-              if (space > offset + 5) take = space - offset;
+            stroke(57, 13, 71, 27, 160);
+            stroke(71, 13, 57, 27, 340);
+            std::string msg = id(feedback_message);
+            if (msg.empty()) msg = "Commande refusee";
+            // Two centered lines below the icon, kept inside 128x64.
+            int cut = std::min(22, (int)msg.size());
+            if (cut < (int)msg.size()) {
+              const int space = (int)msg.rfind(' ', cut);
+              if (space > 8) cut = space;
             }
-            it.print(2, 39 + line * 12, id(title_font), msg.substr(offset, take).c_str());
-            offset += take;
-            while (offset < (int)msg.size() && msg[offset] == ' ') offset++;
+            it.print(64, 41, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                     msg.substr(0, cut).c_str());
+            if (cut < (int)msg.size()) {
+              int pos = cut;
+              while (pos < (int)msg.size() && msg[pos] == ' ') pos++;
+              it.print(64, 53, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                       msg.substr(pos, 22).c_str());
+            }
           }
         }
         return;
@@ -607,6 +619,28 @@ interval:
           }
 
 script:
+  - id: send_diagnostics
+    mode: restart
+    then:
+      - homeassistant.event:
+          event: esphome.ha_menu_diagnostics
+          data:
+            device: ${device_name}
+          data_template:
+            wifi: "{{ rssi }}"
+            uptime: "{{ uptime_seconds }}"
+            ip: "{{ ip_address }}"
+            ssid: "{{ wifi_ssid_name }}"
+            extension_connected: "{{ ext_connected }}"
+            extension_update: "{{ last_sync }}"
+          variables:
+            rssi: !lambda 'return std::isnan(id(wifi_strength).state) ? std::string("?") : std::to_string((int) id(wifi_strength).state);'
+            uptime_seconds: !lambda 'return std::to_string(millis() / 1000UL);'
+            ip_address: !lambda 'return id(device_ip).state;'
+            wifi_ssid_name: !lambda 'return id(device_ssid).state;'
+            ext_connected: !lambda 'return (uint32_t)(millis() - id(last_extension_seen)) < 90000U ? std::string("on") : std::string("off");'
+            last_sync: !lambda 'return id(extension_last_update).state;'
+
   - id: move_cursor
     mode: restart
     parameters:
@@ -771,7 +805,7 @@ script:
             - homeassistant.event:
                 event: esphome.ha_menu_selected
                 data:
-                  device: ha-menu-c3
+                  device: ${device_name}
                 data_template:
                   item_id: "{{ selected_id }}"
                 variables:

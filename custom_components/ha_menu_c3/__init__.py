@@ -18,6 +18,7 @@ from homeassistant.core import (
     callback,
 )
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -43,11 +44,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 class MenuManager:
     """Persist the menu, dispatch actions, synchronize the ESPHome display."""
 
-    def __init__(self, hass: HomeAssistant, device_name: str) -> None:
+    def __init__(self, hass: HomeAssistant, device_name: str, entry_id: str, migrate_legacy: bool = False) -> None:
         self.hass = hass
         self.device_name = device_name
         self.device_slug = device_name.replace("-", "_")
-        self.store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self.entry_id = entry_id
+        self.store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{self.device_slug}")
+        self.migrate_legacy = migrate_legacy
+        self.reported_diagnostics = {}
+        self.reported_at = None
         self.config = validate_config(DEFAULT_CONFIG)
         self.sync_lock = asyncio.Lock()
         self.last_sync = "not_synced"
@@ -57,9 +62,15 @@ class MenuManager:
 
     async def load(self) -> None:
         stored = await self.store.async_load()
+        if stored is None and self.migrate_legacy:
+            stored = await Store(self.hass, STORAGE_VERSION, STORAGE_KEY).async_load()
+            if stored is not None:
+                _LOGGER.info("Migrating menu settings for %s", self.device_name)
         if stored:
             try:
                 self.config = validate_config(stored)
+                if self.migrate_legacy:
+                    await self.store.async_save(self.config)
             except MenuValidationError:
                 _LOGGER.exception("Stored HA Menu C3 configuration is invalid")
 
@@ -71,30 +82,76 @@ class MenuManager:
         return self.status()
 
     def diagnostics(self) -> dict:
-        """Read ESPHome diagnostics without assuming the entity has its default name."""
-        suffixes = {
-            "wifi": "wifi_signal",
-            "uptime": "uptime",
-            "ip": "ip_address",
-            "extension_connected": "extension_connected",
-            "extension_update": "extension_last_update",
+        """Resolve ESPHome diagnostic entities, including renamed entity IDs."""
+        aliases = {
+            "wifi": ("wifi_signal", "wifi_signal_strength"),
+            "uptime": ("uptime",),
+            "ip": ("ip_address",),
+            "ssid": ("wifi_ssid",),
+            "extension_connected": ("extension_connected",),
+            "extension_update": ("extension_last_update",),
         }
-        found = {key: None for key in suffixes}
-        # ESPHome's normal entity IDs start with the node's friendly-name slug.
-        # Renamed IDs remain available in the native ESPHome device page.
-        for state in self.hass.states.async_all():
-            object_id = state.entity_id.split(".", 1)[-1]
-            if not object_id.startswith(self.device_slug + "_"):
+        found = {key: None for key in aliases}
+        try:
+            devices = dr.async_get(self.hass)
+            entities = er.async_get(self.hass)
+            needle = self.device_name.replace("-", "_").lower()
+            device_ids = set()
+            for device in devices.devices.values():
+                names = [device.name, device.name_by_user]
+                names += [str(value) for domain, value in device.identifiers if domain == "esphome"]
+                if any(name and name.lower().replace("-", "_").replace(" ", "_") == needle
+                       for name in names):
+                    device_ids.add(device.id)
+            registry_entries = {e.entity_id: e for e in entities.entities.values()
+                                if e.device_id in device_ids}
+        except Exception:  # Registry can be temporarily unavailable during startup.
+            registry_entries = {}
+
+        # Prefer registry-linked entities; use the ESPHome node name for fallback.
+        candidates = list(registry_entries)
+        legacy_names = {f"{self.device_slug}_{suffix}" for names in aliases.values()
+                        for suffix in names}
+        candidates.extend(s.entity_id for s in self.hass.states.async_all()
+                          if s.entity_id.split(".", 1)[-1] in legacy_names)
+        for entity_id in dict.fromkeys(candidates):
+            state = self.hass.states.get(entity_id)
+            if state is None:
                 continue
-            for key, suffix in suffixes.items():
-                if object_id == f"{self.device_slug}_{suffix}" or object_id.endswith("_" + suffix):
-                    found[key] = {"entity_id": state.entity_id, "state": state.state,
+            registry_entry = registry_entries.get(entity_id)
+            names = [entity_id.rsplit(".", 1)[-1]]
+            if registry_entry is not None:
+                names.extend([registry_entry.original_name or "", registry_entry.unique_id or ""])
+            normalized = [re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") for name in names]
+            for key, suffixes in aliases.items():
+                if found[key] is not None:
+                    continue
+                if any(n == suffix or n.endswith("_" + suffix)
+                       for n in normalized for suffix in suffixes):
+                    found[key] = {"entity_id": entity_id, "state": state.state,
                                   "unit": state.attributes.get("unit_of_measurement", "")}
+
+        # Firmware v0.4 can report live diagnostics even if HA entities were renamed/disabled.
+        if self.reported_at and datetime.now(timezone.utc) - self.reported_at < timedelta(seconds=100):
+            for key, val in self.reported_diagnostics.items():
+                if val not in ("", "unknown", "unavailable"):
+                    found[key] = {"entity_id": None, "state": str(val),
+                                  "unit": "dBm" if key == "wifi" else ""}
         return found
+
+    @callback
+    def on_diagnostics(self, event) -> None:
+        if event.data.get("device") != self.device_name:
+            return
+        allowed = ("wifi", "uptime", "ip", "ssid", "extension_connected", "extension_update")
+        self.reported_diagnostics = {key: event.data[key] for key in allowed
+                                     if isinstance(event.data.get(key), (str, int, float))}
+        self.reported_at = datetime.now(timezone.utc)
 
     def status(self) -> dict:
         return {
             "device": self.device_name,
+            "entry_id": self.entry_id,
             "config": self.config,
             "sync": self.last_sync,
             "error": self.last_error,
@@ -290,59 +347,88 @@ class MenuManager:
             _LOGGER.debug("Could not update base LED: %s", err)
 
 
-@websocket_api.websocket_command({vol.Required("type"): "ha_menu_c3/get"})
+def _managers(hass: HomeAssistant) -> dict[str, MenuManager]:
+    return hass.data.get(DOMAIN, {})
+
+
+def _get_manager(hass: HomeAssistant, msg: dict) -> MenuManager | None:
+    managers = _managers(hass)
+    requested = msg.get("entry_id")
+    if requested:
+        return managers.get(requested)
+    return sorted(managers.values(), key=lambda mgr: mgr.device_name)[0] if managers else None
+
+
+def _response(hass: HomeAssistant, manager: MenuManager) -> dict:
+    return {
+        **manager.status(),
+        "devices": [
+            {"entry_id": mgr.entry_id, "name": mgr.device_name,
+             "online": mgr.heartbeat_ok, "sync": mgr.last_sync}
+            for mgr in sorted(_managers(hass).values(), key=lambda mgr: mgr.device_name)
+        ],
+    }
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "ha_menu_c3/get",
+    vol.Optional("entry_id"): str,
+})
 @websocket_api.require_admin
 @callback
 def ws_get(hass, connection, msg):
-    """Retrieve the currently saved menu."""
-    manager = hass.data.get(DOMAIN)
+    manager = _get_manager(hass, msg)
     if manager is None:
-        connection.send_error(msg["id"], "not_loaded", "Integration not loaded")
+        connection.send_error(msg["id"], "not_loaded", "Appareil introuvable")
         return
-    connection.send_result(msg["id"], manager.status())
+    connection.send_result(msg["id"], _response(hass, manager))
 
 
 @websocket_api.websocket_command({
     vol.Required("type"): "ha_menu_c3/save",
+    vol.Optional("entry_id"): str,
     vol.Required("config"): dict,
 })
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_save(hass, connection, msg):
-    """Validate and persist the editor state, then attempt live sync."""
-    manager = hass.data.get(DOMAIN)
+    manager = _get_manager(hass, msg)
     if manager is None:
-        connection.send_error(msg["id"], "not_loaded", "Integration not loaded")
+        connection.send_error(msg["id"], "not_loaded", "Appareil introuvable")
         return
     try:
-        result = await manager.save(msg["config"])
+        await manager.save(msg["config"])
     except MenuValidationError as err:
         connection.send_error(msg["id"], "invalid_config", str(err))
         return
-    connection.send_result(msg["id"], result)
+    connection.send_result(msg["id"], _response(hass, manager))
 
 
-@websocket_api.websocket_command({vol.Required("type"): "ha_menu_c3/sync"})
+@websocket_api.websocket_command({
+    vol.Required("type"): "ha_menu_c3/sync",
+    vol.Optional("entry_id"): str,
+})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_sync(hass, connection, msg):
-    """Manually resynchronize after reconnecting the device."""
-    manager = hass.data.get(DOMAIN)
+    manager = _get_manager(hass, msg)
     if manager is None:
-        connection.send_error(msg["id"], "not_loaded", "Integration not loaded")
+        connection.send_error(msg["id"], "not_loaded", "Appareil introuvable")
         return
     await manager.sync()
-    connection.send_result(msg["id"], manager.status())
+    connection.send_result(msg["id"], _response(hass, manager))
 
 
-@websocket_api.websocket_command({vol.Required("type"): "ha_menu_c3/identify"})
+@websocket_api.websocket_command({
+    vol.Required("type"): "ha_menu_c3/identify",
+    vol.Optional("entry_id"): str,
+})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_identify(hass, connection, msg):
-    """Identify the hardware through its purple LED animation."""
-    manager = hass.data.get(DOMAIN)
+    manager = _get_manager(hass, msg)
     if manager is None:
-        connection.send_error(msg["id"], "not_loaded", "Integration not loaded")
+        connection.send_error(msg["id"], "not_loaded", "Appareil introuvable")
         return
     try:
         await manager._call_esp("play_led_animation", {"animation": "identify"})
@@ -353,10 +439,14 @@ async def ws_identify(hass, connection, msg):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
-    """Register the backend event bridge and the sidebar panel."""
-    manager = MenuManager(hass, entry.data[CONF_DEVICE_NAME])
+    """Set up a separately configured controller."""
+    was_legacy = entry.unique_id == "main"
+    manager = MenuManager(hass, entry.data[CONF_DEVICE_NAME], entry.entry_id, was_legacy)
     await manager.load()
-    hass.data[DOMAIN] = manager
+    managers = hass.data.setdefault(DOMAIN, {})
+    managers[entry.entry_id] = manager
+    if was_legacy:
+        hass.config_entries.async_update_entry(entry, unique_id=manager.device_name)
 
     if not hass.data.get(f"{DOMAIN}_ws_registered"):
         websocket_api.async_register_command(hass, ws_get)
@@ -372,21 +462,25 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             )
         ])
         hass.data[f"{DOMAIN}_static_registered"] = True
-    await panel_custom.async_register_panel(
-        hass,
-        webcomponent_name="ha-menu-c3-panel",
-        frontend_url_path=PANEL_URL,
-        sidebar_title="HA Menu C3",
-        sidebar_icon="mdi:gesture-tap-button",
-        module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=3",
-        require_admin=True,
-    )
+    if not hass.data.get(f"{DOMAIN}_panel_registered"):
+        await panel_custom.async_register_panel(
+            hass,
+            webcomponent_name="ha-menu-c3-panel",
+            frontend_url_path=PANEL_URL,
+            sidebar_title="HA Menu C3",
+            sidebar_icon="mdi:gesture-tap-button",
+            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=4",
+            require_admin=True,
+        )
+        hass.data[f"{DOMAIN}_panel_registered"] = True
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_READY, manager.on_ready))
     entry.async_on_unload(hass.bus.async_listen(EVENT_SELECTED, manager.on_selected))
     entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, manager.on_state))
     entry.async_on_unload(hass.bus.async_listen(
         "esphome.ha_menu_sleep_changed", manager.on_sleep_changed))
+    entry.async_on_unload(hass.bus.async_listen(
+        "esphome.ha_menu_diagnostics", manager.on_diagnostics))
     entry.async_on_unload(async_track_time_interval(
         hass, lambda now: hass.async_create_task(manager.heartbeat()), timedelta(seconds=30)))
     if hass.is_running:
@@ -400,8 +494,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
-    """Unload event listeners and the sidebar panel."""
     entry.async_unload()
-    hass.data.pop(DOMAIN, None)
-    frontend.async_remove_panel(hass, PANEL_URL)
+    managers = hass.data.get(DOMAIN, {})
+    managers.pop(entry.entry_id, None)
+    if not managers:
+        hass.data.pop(DOMAIN, None)
+        frontend.async_remove_panel(hass, PANEL_URL)
+        hass.data.pop(f"{DOMAIN}_panel_registered", None)
     return True
