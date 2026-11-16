@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.3"
+  fw_version: "0.5.4"
 
 esphome:
   name: ${device_name}
@@ -13,6 +13,7 @@ esphome:
       - lambda: |-
           id(menu_length) = 0;
           id(menu_synced) = false;
+          id(sync_wait_started) = millis();
           id(last_input) = millis();
       - script.execute: boot_led
 
@@ -368,6 +369,9 @@ globals:
   - id: menu_synced
     type: bool
     initial_value: 'false'
+  - id: sync_wait_started
+    type: uint32_t
+    initial_value: '0'
   - id: current_page
     type: std::string
     initial_value: '""'
@@ -595,8 +599,33 @@ display:
         it.print(87, 55, id(footer_font), COLOR_OFF, "L");
         it.print(97, 55, id(footer_font), COLOR_OFF, hold);
       };
-      // Display only after the integration commits a full sync.
+      // Stay on the boot screen until the integration commits a full sync.
       if (!id(menu_synced)) {
+        if ((uint32_t)(now - id(sync_wait_started)) >= 30000U) {
+          const char *reason = nullptr;
+          const char *hint = nullptr;
+          if (!id(wifi_node).is_connected()) {
+            reason = "Wi-Fi indisponible";
+            hint = "Verifier le reseau";
+          } else if (!id(native_api).is_connected_with_state_subscription()) {
+            reason = "HA non connecte";
+            hint = "Verifier ESPHome";
+          } else if (id(last_extension_seen) == 0 ||
+                     (uint32_t)(now - id(last_extension_seen)) >= 90000U) {
+            reason = "Integration absente";
+            hint = "Verifier HA Menu C3";
+          } else {
+            reason = "Menu non recu";
+            hint = "Synchronisation HA";
+          }
+          it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "ERREUR DE CONNEXION");
+          it.circle(64, 22, 12, COLOR_ON);
+          it.line(59, 17, 69, 27, COLOR_ON);
+          it.line(69, 17, 59, 27, COLOR_ON);
+          it.print(64, 37, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, reason);
+          it.print(64, 51, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER, hint);
+          return;
+        }
         it.print(64, 2, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "CONNEXION");
         const int8_t dx[8] = {0, 7, 10, 7, 0, -7, -10, -7};
         const int8_t dy[8] = {-10, -7, 0, 7, 10, 7, 0, -7};
