@@ -79,3 +79,21 @@ class ReservedItemTests(unittest.TestCase):
     def test_about_id_is_reserved(self):
         with self.assertRaisesRegex(MenuValidationError, "reserve"):
             validate_config({"items": [item("__about")]})
+
+class AdvancedControlsTests(unittest.TestCase):
+    def test_light_options(self):
+        one=item("lamp")
+        one["controls"]={"brightness":True,"color":True,"temperature":False}
+        self.assertEqual(validate_config({"items":[one]})["items"][0]["controls"], {"brightness":True,"color":True})
+
+    def test_reject_wrong_domain(self):
+        one=item("lamp")
+        one["controls"]={"humidity":True}
+        with self.assertRaisesRegex(MenuValidationError, "incompatibles"):
+            validate_config({"items":[one]})
+
+    def test_reject_non_boolean(self):
+        one=item("lamp")
+        one["controls"]={"brightness":"true"}
+        with self.assertRaisesRegex(MenuValidationError, "invalides"):
+            validate_config({"items":[one]})

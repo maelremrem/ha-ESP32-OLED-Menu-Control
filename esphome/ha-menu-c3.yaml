@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.4.0"
+  fw_version: "0.5.0"
 
 esphome:
   name: ${device_name}
@@ -74,6 +74,87 @@ api:
             id(transition_direction) = 0;
             // Passive configuration sync must not wake a sleeping device.
 
+    - action: set_control_flags
+      description: Enable supported rotary controls for a menu slot
+      variables:
+        slot: int
+        flags: int
+      then:
+        - lambda: |-
+            if (slot >= 0 && slot < 32)
+              id(menu_control_flags)[slot] = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
+
+    - action: open_controls
+      description: Open a native device control screen
+      variables:
+        slot: int
+        flags: int
+        brightness: int
+        kelvin: int
+        hue: int
+        temp_x10: int
+        humidity: int
+        min_kelvin: int
+        max_kelvin: int
+        min_temp_x10: int
+        max_temp_x10: int
+        temp_step_x10: int
+        min_humidity: int
+        max_humidity: int
+        humidity_step: int
+        modes: string
+        current_mode: string
+        temp_unit: string
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= id(menu_length) || slot != id(control_slot)) return;
+            id(control_loading) = false;
+            id(control_open) = true;
+            id(control_editing) = false;
+            id(control_cursor) = 0;
+            id(ctrl_fields).clear();
+            id(ctrl_modes).clear();
+            id(ctrl_flags) = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
+            for (int bit : {1, 2, 4, 8, 16, 32, 64})
+              if (id(ctrl_flags) & bit) id(ctrl_fields).push_back(bit);
+            id(ctrl_brightness) = std::clamp<int32_t>(brightness, 0, 255);
+            id(ctrl_min_kelvin) = std::max(1000, (int)min_kelvin);
+            id(ctrl_max_kelvin) = std::max(id(ctrl_min_kelvin), (int)max_kelvin);
+            id(ctrl_kelvin) = std::clamp((int)kelvin, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
+            id(ctrl_hue) = std::clamp<int32_t>(hue, 0, 359);
+            id(ctrl_min_temp) = (int)min_temp_x10;
+            id(ctrl_max_temp) = std::max(id(ctrl_min_temp), (int)max_temp_x10);
+            id(ctrl_temp_step) = std::max(1, (int)temp_step_x10);
+            id(ctrl_temp) = std::clamp((int)temp_x10, id(ctrl_min_temp), id(ctrl_max_temp));
+            id(ctrl_min_humidity) = std::max(0, (int)min_humidity);
+            id(ctrl_max_humidity) = std::max(id(ctrl_min_humidity), (int)max_humidity);
+            id(ctrl_humidity_step) = std::max(1, (int)humidity_step);
+            id(ctrl_humidity) = std::clamp((int)humidity, id(ctrl_min_humidity), id(ctrl_max_humidity));
+            id(ctrl_temp_unit) = temp_unit == "F" ? "F" : "C";
+            std::string remaining = modes;
+            while (!remaining.empty() && id(ctrl_modes).size() < 12) {
+              auto sep = remaining.find('|');
+              auto value = remaining.substr(0, sep);
+              if (!value.empty()) id(ctrl_modes).push_back(value);
+              if (sep == std::string::npos) break;
+              remaining = remaining.substr(sep + 1);
+            }
+            id(ctrl_mode_index) = 0;
+            for (size_t i = 0; i < id(ctrl_modes).size(); i++)
+              if (id(ctrl_modes)[i] == current_mode) id(ctrl_mode_index) = (int)i;
+            id(last_input) = millis();
+
+    - action: control_error
+      description: Show a control update error
+      variables:
+        message: string
+      then:
+        - lambda: |-
+            id(control_loading) = false;
+            id(feedback_mode) = 3;
+            id(feedback_message) = message.substr(0, 80);
+            id(feedback_started) = millis();
+
     - action: set_menu_status
       description: Update the live Home Assistant state for a menu entry
       variables:
@@ -93,6 +174,8 @@ api:
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
+            id(control_open) = false;
+            id(control_loading) = false;
             // Passive configuration sync must not wake a sleeping device.
 
     - action: set_base_led
@@ -218,6 +301,87 @@ globals:
     type: std::vector<std::string>
     restore_value: no
     initial_value: 'std::vector<std::string>(32)'
+  - id: menu_control_flags
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(32, 0)'
+  - id: control_slot
+    type: int
+    initial_value: '-1'
+  - id: control_open
+    type: bool
+    initial_value: 'false'
+  - id: control_loading
+    type: bool
+    initial_value: 'false'
+  - id: control_started
+    type: uint32_t
+    initial_value: '0'
+  - id: control_editing
+    type: bool
+    initial_value: 'false'
+  - id: control_cursor
+    type: int
+    initial_value: '0'
+  - id: ctrl_flags
+    type: int
+    initial_value: '0'
+  - id: ctrl_fields
+    type: std::vector<int>
+    initial_value: 'std::vector<int>()'
+  - id: ctrl_modes
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>()'
+  - id: ctrl_mode_index
+    type: int
+    initial_value: '0'
+  - id: ctrl_brightness
+    type: int
+    initial_value: '128'
+  - id: ctrl_kelvin
+    type: int
+    initial_value: '3000'
+  - id: ctrl_hue
+    type: int
+    initial_value: '0'
+  - id: ctrl_temp
+    type: int
+    initial_value: '200'
+  - id: ctrl_humidity
+    type: int
+    initial_value: '50'
+  - id: ctrl_min_kelvin
+    type: int
+    initial_value: '2000'
+  - id: ctrl_max_kelvin
+    type: int
+    initial_value: '6500'
+  - id: ctrl_min_temp
+    type: int
+    initial_value: '70'
+  - id: ctrl_max_temp
+    type: int
+    initial_value: '350'
+  - id: ctrl_temp_step
+    type: int
+    initial_value: '5'
+  - id: ctrl_temp_unit
+    type: std::string
+    initial_value: '"C"'
+  - id: ctrl_min_humidity
+    type: int
+    initial_value: '0'
+  - id: ctrl_max_humidity
+    type: int
+    initial_value: '100'
+  - id: ctrl_humidity_step
+    type: int
+    initial_value: '1'
+  - id: ctrl_field
+    type: std::string
+    initial_value: '""'
+  - id: ctrl_value
+    type: std::string
+    initial_value: '""'
   - id: menu_length
     type: int
     initial_value: '0'
@@ -352,7 +516,7 @@ binary_sensor:
           condition:
             lambda: 'return (uint32_t)(millis() - id(press_start)) >= 700;'
           then:
-            - script.execute: back_menu
+            - script.execute: long_press
           else:
             - script.execute: select_menu
 
@@ -498,6 +662,52 @@ display:
         return;
       }
 
+      if (id(control_loading)) {
+        it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "REGLAGES");
+        it.line(0, 15, 127, 15);
+        it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "Chargement...");
+        it.filled_rectangle(16 + ((now / 12U) % 86U), 53, 12, 3);
+        return;
+      }
+      if (id(control_open)) {
+        std::string title = id(menu_labels)[id(control_slot)];
+        if (title.size() > 18) title = title.substr(0, 18);
+        it.print(2, 0, id(title_font), title.c_str());
+        it.line(0, 13, 127, 13);
+        const int total = (int)id(ctrl_fields).size();
+        const int visible = 3;
+        const int start = std::clamp(id(control_cursor) - 1, 0, std::max(0, total - visible));
+        for (int row = start; row < std::min(total, start + visible); row++) {
+          const int y = 16 + (row - start) * 13;
+          const int field = id(ctrl_fields)[row];
+          const bool active = row == id(control_cursor);
+          const auto color = active ? COLOR_OFF : COLOR_ON;
+          if (active) it.filled_rectangle(0, y, 125, 12, COLOR_ON);
+          const char *label = "";
+          std::string value = "";
+          switch (field) {
+            case 1: label = "Intensite"; value = std::to_string(id(ctrl_brightness)); break;
+            case 2: label = "Blanc"; value = std::to_string(id(ctrl_kelvin)) + "K"; break;
+            case 4: label = "Teinte"; value = std::to_string(id(ctrl_hue)); break;
+            case 8: label = "Consigne"; value = std::to_string(id(ctrl_temp) / 10) + "." + std::to_string(std::abs(id(ctrl_temp) % 10)) + id(ctrl_temp_unit); break;
+            case 16: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
+            case 32: label = "Humidite"; value = std::to_string(id(ctrl_humidity)) + "%"; break;
+            case 64: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
+          }
+          if (value.size() > 9) value = value.substr(0, 9);
+          it.print(3, y, id(title_font), color, label);
+          it.print(121, y, id(title_font), color, TextAlign::TOP_RIGHT, value.c_str());
+          if (active && id(control_editing)) it.rectangle(0, y, 125, 12, COLOR_OFF);
+        }
+        if (total > visible) {
+          const int thumb = std::max(6, (39 * visible) / total);
+          it.filled_rectangle(126, 16 + ((39 - thumb) * start) / (total - visible), 2, thumb, COLOR_ON);
+        }
+        it.line(0, 55, 127, 55);
+        it.print(2, 56, id(title_font), id(control_editing) ? "TOURNER : REGLER" : "CLIC : SELECTIONNER");
+        return;
+      }
+
       auto render_page = [&](const std::string &page, int x, int selection) {
         const bool about = page == "__about";
         std::string title = about ? "A PROPOS" : "HA MENU";
@@ -604,6 +814,13 @@ interval:
   - interval: 1s
     then:
       - lambda: |-
+          if (id(control_loading) &&
+              (uint32_t)(millis() - id(control_started)) > 4000U) {
+            id(control_loading) = false;
+            id(feedback_mode) = 3;
+            id(feedback_message) = "Delai HA depasse";
+            id(feedback_started) = millis();
+          }
           if (id(feedback_mode) >= 2 &&
               (uint32_t)(millis() - id(feedback_started)) >= 10000U) {
             id(feedback_mode) = 0;
@@ -662,6 +879,47 @@ script:
           if (id(feedback_mode) != 0) {
             id(feedback_mode) = 0;
             id(feedback_suppressed) = true;
+            return;
+          }
+          if (id(control_loading)) return;
+          if (id(control_open)) {
+            if (!id(control_editing)) {
+              if (!id(ctrl_fields).empty())
+                id(control_cursor) = (id(control_cursor) + direction + (int)id(ctrl_fields).size()) % (int)id(ctrl_fields).size();
+              return;
+            }
+            if (id(ctrl_fields).empty()) return;
+            const int field = id(ctrl_fields)[id(control_cursor)];
+            id(ctrl_field).clear();
+            int current = 0;
+            switch (field) {
+              case 1:
+                id(ctrl_brightness) = std::clamp(id(ctrl_brightness) + direction * 5, 0, 255);
+                id(ctrl_field) = "brightness"; current = id(ctrl_brightness); break;
+              case 2:
+                id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + direction * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
+                id(ctrl_field) = "color_temp"; current = id(ctrl_kelvin); break;
+              case 4:
+                id(ctrl_hue) = (id(ctrl_hue) + direction * 15 + 360) % 360;
+                id(ctrl_field) = "color"; current = id(ctrl_hue); break;
+              case 8:
+                id(ctrl_temp) = std::clamp(id(ctrl_temp) + direction * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
+                id(ctrl_field) = "temperature"; current = id(ctrl_temp); break;
+              case 32:
+                id(ctrl_humidity) = std::clamp(id(ctrl_humidity) + direction * id(ctrl_humidity_step), id(ctrl_min_humidity), id(ctrl_max_humidity));
+                id(ctrl_field) = "humidity"; current = id(ctrl_humidity); break;
+              case 16:
+              case 64:
+                if (id(ctrl_modes).empty()) return;
+                id(ctrl_mode_index) = (id(ctrl_mode_index) + direction + (int)id(ctrl_modes).size()) % (int)id(ctrl_modes).size();
+                id(ctrl_field) = field == 16 ? "hvac_mode" : "humidifier_mode";
+                id(ctrl_value) = id(ctrl_modes)[id(ctrl_mode_index)];
+                id(send_adjust).execute(id(menu_ids)[id(control_slot)], id(ctrl_field), id(ctrl_value));
+                return;
+            }
+            if (id(ctrl_field).empty()) return;
+            id(ctrl_value) = std::to_string(current);
+            id(send_adjust).execute(id(menu_ids)[id(control_slot)], id(ctrl_field), id(ctrl_value));
             return;
           }
           int children = id(current_page).empty() ? 1 :
@@ -750,6 +1008,11 @@ script:
             id(feedback_suppressed) = true;
             return;
           }
+          if (id(control_loading)) return;
+          if (id(control_open)) {
+            id(control_editing) = !id(control_editing);
+            return;
+          }
           if (id(current_page) == "__about") {
             if (id(cursor) == 0) id(back_menu).execute();
             return;
@@ -790,6 +1053,91 @@ script:
             id(transition_direction) = 1;
             id(transition_started) = millis();
           }
+
+  - id: long_press
+    mode: restart
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          const bool was_asleep = id(screen_sleep);
+          id(last_input) = now;
+          id(screen_sleep) = false;
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            return;
+          }
+          if (id(control_loading) || id(control_open)) {
+            id(control_loading) = false;
+            id(control_open) = false;
+            id(control_editing) = false;
+            return;
+          }
+          if (id(current_page) == "__about" || (!id(current_page).empty() && id(cursor) == 0)) {
+            id(back_menu).execute(); return;
+          }
+          int position = id(current_page).empty() ? 0 : 1;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != id(current_page)) continue;
+            if (position++ != id(cursor)) continue;
+            if (id(menu_control_flags)[i] != 0) {
+              id(control_slot) = i;
+              id(control_loading) = true;
+              id(control_started) = now;
+              id(send_open_control).execute();
+              return;
+            }
+            break;
+          }
+          id(back_menu).execute();
+
+  - id: send_open_control
+    mode: restart
+    then:
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - homeassistant.event:
+                event: esphome.ha_menu_controls_open
+                data:
+                  device: ${device_name}
+                data_template:
+                  item_id: "{{ item_key }}"
+                variables:
+                  item_key: !lambda 'return id(menu_ids)[id(control_slot)];'
+          else:
+            - lambda: |-
+                id(control_loading) = false;
+                id(feedback_mode) = 3;
+                id(feedback_message) = "HA deconnecte";
+                id(feedback_started) = millis();
+
+  - id: send_adjust
+    mode: queued
+    max_runs: 20
+    parameters:
+      item_key: string
+      field_key: string
+      field_value: string
+    then:
+      - homeassistant.event:
+          event: esphome.ha_menu_control_adjust
+          data:
+            device: ${device_name}
+          data_template:
+            item_id: "{{ item_key }}"
+            field: "{{ field_key }}"
+            value: "{{ field_value }}"
+          variables:
+            item_key: !lambda 'return item_key;'
+            field_key: !lambda 'return field_key;'
+            field_value: !lambda 'return field_value;'
 
   - id: send_selection
     mode: restart

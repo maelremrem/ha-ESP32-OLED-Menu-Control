@@ -1,0 +1,1315 @@
+substitutions:
+  device_name: ha-menu-c3
+  friendly_name: HA Menu C3
+  encoder_debounce_ms: "35"
+  fw_version: "0.5.0"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -10
+    then:
+      - lambda: |-
+          // Demo menu; Home Assistant can replace it at runtime.
+          id(menu_ids)[0] = "lights";
+          id(menu_labels)[0] = "Eclairage";
+          id(menu_parents)[0] = "";
+          id(menu_ids)[1] = "night";
+          id(menu_labels)[1] = "Mode nuit";
+          id(menu_parents)[1] = "";
+          id(menu_ids)[2] = "garage";
+          id(menu_labels)[2] = "Garage";
+          id(menu_parents)[2] = "";
+          id(menu_ids)[3] = "salon";
+          id(menu_labels)[3] = "Salon";
+          id(menu_parents)[3] = "lights";
+          id(menu_ids)[4] = "kitchen";
+          id(menu_labels)[4] = "Cuisine";
+          id(menu_parents)[4] = "lights";
+          id(menu_length) = 5;
+          id(last_input) = millis();
+          id(boot_started) = millis();
+      - script.execute: boot_led
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  id: native_api
+  on_client_connected:
+    then:
+      - delay: 3s
+      - homeassistant.event:
+          event: esphome.ha_menu_ready
+          data:
+            device: ${device_name}
+  actions:
+    - action: set_menu_item
+      description: Add or update a menu entry at a given position
+      variables:
+        slot: int
+        item_id: string
+        parent_id: string
+        label: string
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= 32 || item_id.empty() || label.empty()) return;
+            id(menu_ids)[slot] = item_id.substr(0, 40);
+            id(menu_parents)[slot] = parent_id.substr(0, 40);
+            id(menu_labels)[slot] = label.substr(0, 64);
+            id(current_page) = "";
+            id(cursor) = 0;
+            id(transition_direction) = 0;
+            // Passive configuration sync must not wake a sleeping device.
+
+    - action: set_control_flags
+      description: Enable supported rotary controls for a menu slot
+      variables:
+        slot: int
+        flags: int
+      then:
+        - lambda: |-
+            if (slot >= 0 && slot < 32)
+              id(menu_control_flags)[slot] = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
+
+    - action: open_controls
+      description: Open a native device control screen
+      variables:
+        slot: int
+        flags: int
+        brightness: int
+        kelvin: int
+        hue: int
+        temp_x10: int
+        humidity: int
+        min_kelvin: int
+        max_kelvin: int
+        min_temp_x10: int
+        max_temp_x10: int
+        temp_step_x10: int
+        min_humidity: int
+        max_humidity: int
+        humidity_step: int
+        modes: string
+        current_mode: string
+        temp_unit: string
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= id(menu_length) || slot != id(control_slot)) return;
+            id(control_loading) = false;
+            id(control_open) = true;
+            id(control_editing) = false;
+            id(control_cursor) = 0;
+            id(ctrl_fields).clear();
+            id(ctrl_modes).clear();
+            id(ctrl_flags) = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
+            for (int bit : {1, 2, 4, 8, 16, 32, 64})
+              if (id(ctrl_flags) & bit) id(ctrl_fields).push_back(bit);
+            id(ctrl_brightness) = std::clamp<int32_t>(brightness, 0, 255);
+            id(ctrl_min_kelvin) = std::max(1000, (int)min_kelvin);
+            id(ctrl_max_kelvin) = std::max(id(ctrl_min_kelvin), (int)max_kelvin);
+            id(ctrl_kelvin) = std::clamp((int)kelvin, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
+            id(ctrl_hue) = std::clamp<int32_t>(hue, 0, 359);
+            id(ctrl_min_temp) = (int)min_temp_x10;
+            id(ctrl_max_temp) = std::max(id(ctrl_min_temp), (int)max_temp_x10);
+            id(ctrl_temp_step) = std::max(1, (int)temp_step_x10);
+            id(ctrl_temp) = std::clamp((int)temp_x10, id(ctrl_min_temp), id(ctrl_max_temp));
+            id(ctrl_min_humidity) = std::max(0, (int)min_humidity);
+            id(ctrl_max_humidity) = std::max(id(ctrl_min_humidity), (int)max_humidity);
+            id(ctrl_humidity_step) = std::max(1, (int)humidity_step);
+            id(ctrl_humidity) = std::clamp((int)humidity, id(ctrl_min_humidity), id(ctrl_max_humidity));
+            id(ctrl_temp_unit) = temp_unit == "F" ? "F" : "C";
+            std::string remaining = modes;
+            while (!remaining.empty() && id(ctrl_modes).size() < 12) {
+              auto sep = remaining.find('|');
+              auto value = remaining.substr(0, sep);
+              if (!value.empty()) id(ctrl_modes).push_back(value);
+              if (sep == std::string::npos) break;
+              remaining = remaining.substr(sep + 1);
+            }
+            id(ctrl_mode_index) = 0;
+            for (size_t i = 0; i < id(ctrl_modes).size(); i++)
+              if (id(ctrl_modes)[i] == current_mode) id(ctrl_mode_index) = (int)i;
+            id(last_input) = millis();
+
+    - action: control_error
+      description: Show a control update error
+      variables:
+        message: string
+      then:
+        - lambda: |-
+            id(control_loading) = false;
+            id(feedback_mode) = 3;
+            id(feedback_message) = message.substr(0, 80);
+            id(feedback_started) = millis();
+
+    - action: set_menu_status
+      description: Update the live Home Assistant state for a menu entry
+      variables:
+        slot: int
+        status: string
+      then:
+        - lambda: |-
+            if (slot >= 0 && slot < 32) id(menu_states)[slot] = status.substr(0, 12);
+
+    - action: set_menu_count
+      description: Set the number of active entries (0 to 32)
+      variables:
+        count: int
+      then:
+        - lambda: |-
+            id(menu_length) = static_cast<int>(std::clamp<int32_t>(count, 0, 32));
+            id(current_page) = "";
+            id(cursor) = 0;
+            id(transition_direction) = 0;
+            id(control_open) = false;
+            id(control_loading) = false;
+            // Passive configuration sync must not wake a sleeping device.
+
+    - action: set_base_led
+      description: Change the persistent LED color (RGB values 0 to 255)
+      variables:
+        red: int
+        green: int
+        blue: int
+      then:
+        - lambda: |-
+            id(base_red) = static_cast<int>(std::clamp<int32_t>(red, 0, 255));
+            id(base_green) = static_cast<int>(std::clamp<int32_t>(green, 0, 255));
+            id(base_blue) = static_cast<int>(std::clamp<int32_t>(blue, 0, 255));
+        - if:
+            condition:
+              lambda: 'return !id(led_busy);'
+            then:
+              - script.execute: restore_led
+
+    - action: play_led_animation
+      description: Play a temporary LED animation (notify or identify)
+      variables:
+        animation: string
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(led_busy) && animation == "notify";'
+            then:
+              - script.execute: notify_led
+        - if:
+            condition:
+              lambda: 'return !id(led_busy) && animation == "identify";'
+            then:
+              - script.execute: identify_led
+
+    - action: set_sleep_timeout
+      description: Set OLED and LED idle timeout (seconds; 0 disables sleep)
+      variables:
+        seconds: int
+      then:
+        - number.set:
+            id: sleep_timeout_number
+            value: !lambda 'return static_cast<float>(std::clamp<int32_t>(seconds, 0, 3600));'
+
+    - action: set_extension_status
+      description: Report the latest integration synchronization time
+      variables:
+        last_update: string
+      then:
+        - lambda: |-
+            id(last_extension_seen) = millis();
+            id(extension_last_update).publish_state(last_update.substr(0, 48));
+
+    - action: extension_heartbeat
+      description: Keep the integration connectivity diagnostic current
+      then:
+        - lambda: id(last_extension_seen) = millis();
+        - script.execute: send_diagnostics
+
+    - action: action_result
+      description: Report success or failure of a selected menu action
+      variables:
+        item_id: string
+        success: bool
+        message: string
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(pending_item).empty() && id(pending_item) == item_id;'
+            then:
+              - script.stop: pending_timeout
+              - lambda: |-
+                  id(pending_item).clear();
+                  if (!id(feedback_suppressed)) {
+                    id(feedback_mode) = success ? 2 : 3;
+                    id(feedback_message) = message.substr(0, 96);
+                    id(feedback_started) = millis();
+                  }
+              - if:
+                  condition:
+                    lambda: 'return success;'
+                  then:
+                    - script.execute: success_led
+                  else:
+                    - script.execute: error_led
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true
+  frequency: 400kHz
+
+font:
+  - file: "gfonts://Roboto"
+    id: title_font
+    size: 10
+    glyphsets:
+      - GF_Latin_Core
+  - file: "gfonts://Roboto"
+    id: menu_font
+    size: 11
+    glyphsets:
+      - GF_Latin_Core
+
+globals:
+  - id: menu_ids
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_labels
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_parents
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_states
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_control_flags
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(32, 0)'
+  - id: control_slot
+    type: int
+    initial_value: '-1'
+  - id: control_open
+    type: bool
+    initial_value: 'false'
+  - id: control_loading
+    type: bool
+    initial_value: 'false'
+  - id: control_started
+    type: uint32_t
+    initial_value: '0'
+  - id: control_editing
+    type: bool
+    initial_value: 'false'
+  - id: control_cursor
+    type: int
+    initial_value: '0'
+  - id: ctrl_flags
+    type: int
+    initial_value: '0'
+  - id: ctrl_fields
+    type: std::vector<int>
+    initial_value: 'std::vector<int>()'
+  - id: ctrl_modes
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>()'
+  - id: ctrl_mode_index
+    type: int
+    initial_value: '0'
+  - id: ctrl_brightness
+    type: int
+    initial_value: '128'
+  - id: ctrl_kelvin
+    type: int
+    initial_value: '3000'
+  - id: ctrl_hue
+    type: int
+    initial_value: '0'
+  - id: ctrl_temp
+    type: int
+    initial_value: '200'
+  - id: ctrl_humidity
+    type: int
+    initial_value: '50'
+  - id: ctrl_min_kelvin
+    type: int
+    initial_value: '2000'
+  - id: ctrl_max_kelvin
+    type: int
+    initial_value: '6500'
+  - id: ctrl_min_temp
+    type: int
+    initial_value: '70'
+  - id: ctrl_max_temp
+    type: int
+    initial_value: '350'
+  - id: ctrl_temp_step
+    type: int
+    initial_value: '5'
+  - id: ctrl_temp_unit
+    type: std::string
+    initial_value: '"C"'
+  - id: ctrl_min_humidity
+    type: int
+    initial_value: '0'
+  - id: ctrl_max_humidity
+    type: int
+    initial_value: '100'
+  - id: ctrl_humidity_step
+    type: int
+    initial_value: '1'
+  - id: ctrl_field
+    type: std::string
+    initial_value: '""'
+  - id: ctrl_value
+    type: std::string
+    initial_value: '""'
+  - id: menu_length
+    type: int
+    initial_value: '0'
+  - id: current_page
+    type: std::string
+    initial_value: '""'
+  - id: cursor
+    type: int
+    initial_value: '0'
+  - id: screen_sleep
+    type: bool
+    initial_value: 'false'
+  - id: last_input
+    type: uint32_t
+    initial_value: '0'
+  - id: last_encoder_step
+    type: uint32_t
+    initial_value: '0'
+  - id: previous_page
+    type: std::string
+    initial_value: '""'
+  - id: previous_cursor
+    type: int
+    initial_value: '0'
+  - id: transition_started
+    type: uint32_t
+    initial_value: '0'
+  - id: transition_direction
+    type: int
+    initial_value: '0'
+  - id: boot_started
+    type: uint32_t
+    initial_value: '0'
+  - id: press_start
+    type: uint32_t
+    initial_value: '0'
+  - id: pending_item
+    type: std::string
+    initial_value: '""'
+  - id: feedback_mode
+    type: int
+    initial_value: '0'
+  - id: feedback_message
+    type: std::string
+    initial_value: '""'
+  - id: feedback_item
+    type: std::string
+    initial_value: '""'
+  - id: feedback_started
+    type: uint32_t
+    initial_value: '0'
+  - id: feedback_suppressed
+    type: bool
+    initial_value: 'false'
+  - id: sleep_timeout_sec
+    type: int
+    initial_value: '30'
+  - id: last_extension_seen
+    type: uint32_t
+    initial_value: '0'
+  - id: led_busy
+    type: bool
+    initial_value: 'false'
+  - id: base_red
+    type: int
+    initial_value: '0'
+  - id: base_green
+    type: int
+    initial_value: '180'
+  - id: base_blue
+    type: int
+    initial_value: '0'
+
+sensor:
+  - platform: wifi_signal
+    id: wifi_strength
+    name: "WiFi Signal"
+    update_interval: 30s
+    entity_category: diagnostic
+  - platform: uptime
+    name: "Uptime"
+    type: seconds
+    update_interval: 30s
+    entity_category: diagnostic
+  - platform: rotary_encoder
+    id: menu_encoder
+    pin_a:
+      number: GPIO6
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: GPIO7
+      mode:
+        input: true
+        pullup: true
+    # One decoded step per complete quadrature cycle (KY-040).
+    resolution: 1
+    on_clockwise:
+      - script.execute:
+          id: move_cursor
+          direction: 1
+    on_anticlockwise:
+      - script.execute:
+          id: move_cursor
+          direction: -1
+
+binary_sensor:
+  - platform: template
+    id: extension_connected
+    name: "Extension Connected"
+    entity_category: diagnostic
+    device_class: connectivity
+    lambda: |-
+      return id(last_extension_seen) != 0 &&
+             (uint32_t)(millis() - id(last_extension_seen)) < 90000;
+  - platform: gpio
+    id: menu_button
+    pin:
+      number: GPIO3
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      - lambda: id(press_start) = millis();
+    on_release:
+      - if:
+          condition:
+            lambda: 'return (uint32_t)(millis() - id(press_start)) >= 700;'
+          then:
+            - script.execute: long_press
+          else:
+            - script.execute: select_menu
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: device_ip
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      id: device_ssid
+      name: "WiFi SSID"
+      entity_category: diagnostic
+  - platform: template
+    id: extension_last_update
+    name: "Extension Last Update"
+    entity_category: diagnostic
+    icon: mdi:clock-check-outline
+
+number:
+  - platform: template
+    id: sleep_timeout_number
+    name: "Sleep Timeout"
+    entity_category: config
+    icon: mdi:sleep
+    unit_of_measurement: s
+    min_value: 0
+    max_value: 3600
+    step: 1
+    optimistic: true
+    initial_value: 30
+    restore_value: false
+    set_action:
+      - lambda: |-
+          id(sleep_timeout_sec) = static_cast<int>(x);
+          if (id(sleep_timeout_sec) == 0 && id(screen_sleep)) {
+            id(screen_sleep) = false;
+            id(last_input) = millis();
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+          }
+      - homeassistant.event:
+          event: esphome.ha_menu_sleep_changed
+          data:
+            device: ${device_name}
+          data_template:
+            seconds: "{{ sleep_time }}"
+          variables:
+            sleep_time: !lambda 'return std::to_string(static_cast<int>(x));'
+
+button:
+  - platform: template
+    name: "Identify"
+    entity_category: config
+    icon: mdi:lightbulb-flash
+    on_press:
+      - script.execute: identify_led
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_rgb
+    name: "Status RGB"
+    pin: GPIO10
+    num_leds: 1
+    chipset: ws2812
+    channel_colors: GRB
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    effects:
+      - pulse:
+          name: "Working"
+          transition_length: 400ms
+          update_interval: 400ms
+          min_brightness: 5%
+          max_brightness: 35%
+
+display:
+  - platform: ssd1306_i2c
+    id: oled
+    model: "SSD1306 128x64"
+    address: 0x3C
+    update_interval: 50ms
+    lambda: |-
+      it.fill(COLOR_OFF);
+      if (id(screen_sleep)) return;
+      const uint32_t now = millis();
+      if ((uint32_t)(now - id(boot_started)) < 750) {
+        it.print(19, 13, id(menu_font), "HA MENU C3");
+        it.line(16, 34, 111, 34);
+        it.filled_rectangle(16, 40, ((now - id(boot_started)) * 96U) / 750U, 3);
+        return;
+      }
+
+      // Action feedback: command sent is not the same as physical state confirmed.
+      if (id(feedback_mode) != 0) {
+        const int mode = id(feedback_mode);
+        if (mode == 1) {
+          it.print(3, 2, id(title_font), "EN COURS");
+          it.line(0, 14, 127, 14);
+          it.print(4, 24, id(menu_font), "Commande envoyee...");
+          it.filled_rectangle((now / 9U) % 118U, 52, 10, 3);
+        } else {
+          const bool ok = mode == 2;
+          const uint32_t elapsed = (uint32_t)(now - id(feedback_started));
+          // Grow the center ring, then draw the check/cross in two strokes.
+          const int radius = std::clamp((int)(elapsed / 14U), 1, 15);
+          it.circle(64, 20, radius, COLOR_ON);
+          auto stroke = [&](int x1, int y1, int x2, int y2, uint32_t start_ms) {
+            const int step = std::clamp((int)elapsed - (int)start_ms, 0, 180);
+            if (step == 0) return;
+            const int ex = x1 + (x2 - x1) * step / 180;
+            const int ey = y1 + (y2 - y1) * step / 180;
+            it.line(x1, y1, ex, ey, COLOR_ON);
+          };
+          if (ok) {
+            stroke(56, 20, 62, 26, 160);
+            stroke(62, 26, 74, 13, 340);
+            it.print(64, 43, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "TERMINE");
+            if (!id(feedback_item).empty())
+              it.print(64, 55, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                       id(feedback_item).substr(0, 18).c_str());
+          } else {
+            stroke(57, 13, 71, 27, 160);
+            stroke(71, 13, 57, 27, 340);
+            std::string msg = id(feedback_message);
+            if (msg.empty()) msg = "Commande refusee";
+            // Two centered lines below the icon, kept inside 128x64.
+            int cut = std::min(22, (int)msg.size());
+            if (cut < (int)msg.size()) {
+              const int space = (int)msg.rfind(' ', cut);
+              if (space > 8) cut = space;
+            }
+            it.print(64, 41, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                     msg.substr(0, cut).c_str());
+            if (cut < (int)msg.size()) {
+              int pos = cut;
+              while (pos < (int)msg.size() && msg[pos] == ' ') pos++;
+              it.print(64, 53, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                       msg.substr(pos, 22).c_str());
+            }
+          }
+        }
+        return;
+      }
+
+      if (id(control_loading)) {
+        it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "REGLAGES");
+        it.line(0, 15, 127, 15);
+        it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "Chargement...");
+        it.filled_rectangle(16 + ((now / 12U) % 86U), 53, 12, 3);
+        return;
+      }
+      if (id(control_open)) {
+        std::string title = id(menu_labels)[id(control_slot)];
+        if (title.size() > 18) title = title.substr(0, 18);
+        it.print(2, 0, id(title_font), title.c_str());
+        it.line(0, 13, 127, 13);
+        const int total = (int)id(ctrl_fields).size();
+        const int visible = 3;
+        const int start = std::clamp(id(control_cursor) - 1, 0, std::max(0, total - visible));
+        for (int row = start; row < std::min(total, start + visible); row++) {
+          const int y = 16 + (row - start) * 13;
+          const int field = id(ctrl_fields)[row];
+          const bool active = row == id(control_cursor);
+          const auto color = active ? COLOR_OFF : COLOR_ON;
+          if (active) it.filled_rectangle(0, y, 125, 12, COLOR_ON);
+          const char *label = "";
+          std::string value = "";
+          switch (field) {
+            case 1: label = "Intensite"; value = std::to_string(id(ctrl_brightness)); break;
+            case 2: label = "Blanc"; value = std::to_string(id(ctrl_kelvin)) + "K"; break;
+            case 4: label = "Teinte"; value = std::to_string(id(ctrl_hue)); break;
+            case 8: label = "Consigne"; value = std::to_string(id(ctrl_temp) / 10) + "." + std::to_string(std::abs(id(ctrl_temp) % 10)) + id(ctrl_temp_unit); break;
+            case 16: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
+            case 32: label = "Humidite"; value = std::to_string(id(ctrl_humidity)) + "%"; break;
+            case 64: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
+          }
+          if (value.size() > 9) value = value.substr(0, 9);
+          it.print(3, y, id(title_font), color, label);
+          it.print(121, y, id(title_font), color, TextAlign::TOP_RIGHT, value.c_str());
+          if (active && id(control_editing)) it.rectangle(0, y, 125, 12, COLOR_OFF);
+        }
+        if (total > visible) {
+          const int thumb = std::max(6, (39 * visible) / total);
+          it.filled_rectangle(126, 16 + ((39 - thumb) * start) / (total - visible), 2, thumb, COLOR_ON);
+        }
+        it.line(0, 55, 127, 55);
+        it.print(2, 56, id(title_font), id(control_editing) ? "TOURNER : REGLER" : "CLIC : SELECTIONNER");
+        return;
+      }
+
+      auto render_page = [&](const std::string &page, int x, int selection) {
+        const bool about = page == "__about";
+        std::string title = about ? "A PROPOS" : "HA MENU";
+        for (int i = 0; !about && i < id(menu_length); i++) {
+          if (!page.empty() && id(menu_ids)[i] == page) {
+            title = id(menu_labels)[i];
+            break;
+          }
+        }
+        if (title.size() > 14) title = title.substr(0, 14);
+        it.print(x, 0, id(title_font), title.c_str());
+
+        // Top status: WiFi antenna (left) and Home Assistant house (right).
+        const int w = x + 100;
+        if (id(wifi_node).is_connected()) {
+          it.line(w, 3, w + 4, 1);
+          it.line(w + 4, 1, w + 8, 3);
+          it.line(w + 2, 5, w + 4, 4);
+          it.line(w + 4, 4, w + 6, 5);
+          it.filled_rectangle(w + 4, 7, 1, 1);
+        } else { it.line(w, 1, w + 8, 9); }
+        const int h = x + 116;
+        it.line(h, 4, h + 5, 0);
+        it.line(h + 5, 0, h + 10, 4);
+        it.rectangle(h + 1, 4, 9, 6);
+        if (id(extension_connected).state) it.filled_rectangle(h + 4, 6, 3, 3);
+        else it.line(h + 1, 4, h + 10, 10);
+        it.line(x, 13, x + 127, 13);
+
+        int child_count = 0;
+        if (!about) for (int i = 0; i < id(menu_length); i++) {
+          if (id(menu_parents)[i] == page) child_count++;
+        }
+        const bool has_back = !page.empty();
+        // "A propos" is a permanent root entry and doesn't consume menu slots.
+        const int total = about ? 9 : child_count + (has_back ? 1 : 0) + (page.empty() ? 1 : 0);
+        const int visible = 4;
+        const int start = std::clamp(selection - 1, 0, std::max(0, total - visible));
+        auto draw_row = [&](int position, const std::string &label,
+                            const std::string &state, bool submenu) {
+          if (position < start || position >= start + visible) return;
+          const int y = 16 + (position - start) * 12;
+          const bool selected = (position == selection);
+          const auto ink = selected ? COLOR_OFF : COLOR_ON;
+          if (selected) it.filled_rectangle(x, y, total > visible ? 124 : 128, 12, COLOR_ON);
+          std::string name = label;
+          if (name.size() > (state.empty() ? 17U : 12U))
+            name = name.substr(0, state.empty() ? 17 : 12);
+          it.print(x + 3, y, id(menu_font), ink, name.c_str());
+          if (submenu) it.print(x + 118, y, id(menu_font), ink, ">");
+          else if (!state.empty()) {
+            std::string short_state = state.substr(0, 6);
+            it.print(x + 121, y, id(menu_font), ink, TextAlign::TOP_RIGHT,
+                     short_state.c_str());
+          }
+        };
+        if (about) {
+          std::string info[9] = {
+            "< Retour", "FW: ${fw_version}",
+            std::string("WiFi: ") + (id(wifi_node).is_connected() ? "OK" : "OFF"),
+            std::string("SSID: ") + id(device_ssid).state,
+            std::string("IP: ") + id(device_ip).state,
+            std::string("RSSI: ") + (std::isnan(id(wifi_strength).state) ? "?" : std::to_string((int) id(wifi_strength).state)) + "dBm",
+            std::string("HA: ") + (id(extension_connected).state ? "OK" : "OFF"),
+            std::string("Sync: ") + id(extension_last_update).state.substr(0, 12),
+            std::string("Uptime: ") + std::to_string(millis() / 3600000UL) + "h " + std::to_string((millis() / 60000UL) % 60) + "m"
+          };
+          for (int i = 0; i < 9; i++) draw_row(i, info[i], "", false);
+        } else {
+          int pos = 0;
+          if (has_back) draw_row(pos++, "< Retour", "", false);
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != page) continue;
+            bool submenu = false;
+            for (int j = 0; j < id(menu_length); j++) {
+              if (id(menu_parents)[j] == id(menu_ids)[i]) { submenu = true; break; }
+            }
+            draw_row(pos++, id(menu_labels)[i], submenu ? "" : id(menu_states)[i], submenu);
+          }
+          if (page.empty()) draw_row(pos, "A Propos", "", true);
+        }
+        if (total > visible) {
+          const int track = 48;
+          const int thumb = std::max(6, track * visible / total);
+          const int y = 16 + (track - thumb) * start / (total - visible);
+          it.vertical_line(x + 127, 16, track, COLOR_ON);
+          it.filled_rectangle(x + 125, y, 2, thumb, COLOR_ON);
+        }
+      };
+
+      const uint32_t age = (uint32_t)(now - id(transition_started));
+      if (id(transition_direction) != 0 && age < 220) {
+        const int dx = (int)((age * 128U) / 220U);
+        if (id(transition_direction) > 0) {
+          render_page(id(previous_page), -dx, id(previous_cursor));
+          render_page(id(current_page), 128 - dx, id(cursor));
+        } else {
+          render_page(id(previous_page), dx, id(previous_cursor));
+          render_page(id(current_page), -128 + dx, id(cursor));
+        }
+      } else render_page(id(current_page), 0, id(cursor));
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(control_loading) &&
+              (uint32_t)(millis() - id(control_started)) > 4000U) {
+            id(control_loading) = false;
+            id(feedback_mode) = 3;
+            id(feedback_message) = "Delai HA depasse";
+            id(feedback_started) = millis();
+          }
+          if (id(feedback_mode) >= 2 &&
+              (uint32_t)(millis() - id(feedback_started)) >= 10000U) {
+            id(feedback_mode) = 0;
+          }
+          const int timeout = id(sleep_timeout_sec);
+          if (!id(screen_sleep) && !id(led_busy) && id(pending_item).empty() &&
+              id(feedback_mode) == 0 &&
+              timeout > 0 &&
+              (uint32_t)(millis() - id(last_input)) >= (uint32_t)timeout * 1000U) {
+            id(screen_sleep) = true;
+            id(oled).turn_off();
+            id(restore_led).execute();
+          }
+
+script:
+  - id: send_diagnostics
+    mode: restart
+    then:
+      - homeassistant.event:
+          event: esphome.ha_menu_diagnostics
+          data:
+            device: ${device_name}
+          data_template:
+            wifi: "{{ rssi }}"
+            uptime: "{{ uptime_seconds }}"
+            ip: "{{ ip_address }}"
+            ssid: "{{ wifi_ssid_name }}"
+            extension_connected: "{{ ext_connected }}"
+            extension_update: "{{ last_sync }}"
+          variables:
+            rssi: !lambda 'return std::isnan(id(wifi_strength).state) ? std::string("?") : std::to_string((int) id(wifi_strength).state);'
+            uptime_seconds: !lambda 'return std::to_string(millis() / 1000UL);'
+            ip_address: !lambda 'return id(device_ip).state;'
+            wifi_ssid_name: !lambda 'return id(device_ssid).state;'
+            ext_connected: !lambda 'return (uint32_t)(millis() - id(last_extension_seen)) < 90000U ? std::string("on") : std::string("off");'
+            last_sync: !lambda 'return id(extension_last_update).state;'
+
+  - id: move_cursor
+    mode: restart
+    parameters:
+      direction: int
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          // Guard against mechanical bounce; tune encoder_debounce_ms.
+          if ((uint32_t)(now - id(last_encoder_step)) < ${encoder_debounce_ms}) return;
+          id(last_encoder_step) = now;
+          bool was_asleep = id(screen_sleep);
+          id(screen_sleep) = false;
+          id(last_input) = now;
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            id(feedback_suppressed) = true;
+            return;
+          }
+          if (id(control_loading)) return;
+          if (id(control_open)) {
+            if (!id(control_editing)) {
+              if (!id(ctrl_fields).empty())
+                id(control_cursor) = (id(control_cursor) + direction + (int)id(ctrl_fields).size()) % (int)id(ctrl_fields).size();
+              return;
+            }
+            if (id(ctrl_fields).empty()) return;
+            const int field = id(ctrl_fields)[id(control_cursor)];
+            id(ctrl_field).clear();
+            int current = 0;
+            switch (field) {
+              case 1:
+                id(ctrl_brightness) = std::clamp(id(ctrl_brightness) + direction * 5, 0, 255);
+                id(ctrl_field) = "brightness"; current = id(ctrl_brightness); break;
+              case 2:
+                id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + direction * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
+                id(ctrl_field) = "color_temp"; current = id(ctrl_kelvin); break;
+              case 4:
+                id(ctrl_hue) = (id(ctrl_hue) + direction * 15 + 360) % 360;
+                id(ctrl_field) = "color"; current = id(ctrl_hue); break;
+              case 8:
+                id(ctrl_temp) = std::clamp(id(ctrl_temp) + direction * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
+                id(ctrl_field) = "temperature"; current = id(ctrl_temp); break;
+              case 32:
+                id(ctrl_humidity) = std::clamp(id(ctrl_humidity) + direction * id(ctrl_humidity_step), id(ctrl_min_humidity), id(ctrl_max_humidity));
+                id(ctrl_field) = "humidity"; current = id(ctrl_humidity); break;
+              case 16:
+              case 64:
+                if (id(ctrl_modes).empty()) return;
+                id(ctrl_mode_index) = (id(ctrl_mode_index) + direction + (int)id(ctrl_modes).size()) % (int)id(ctrl_modes).size();
+                id(ctrl_field) = field == 16 ? "hvac_mode" : "humidifier_mode";
+                id(ctrl_value) = id(ctrl_modes)[id(ctrl_mode_index)];
+                id(send_adjust).execute(id(menu_ids)[id(control_slot)], id(ctrl_field), id(ctrl_value));
+                return;
+            }
+            if (id(ctrl_field).empty()) return;
+            id(ctrl_value) = std::to_string(current);
+            id(send_adjust).execute(id(menu_ids)[id(control_slot)], id(ctrl_field), id(ctrl_value));
+            return;
+          }
+          int children = id(current_page).empty() ? 1 :
+                         (id(current_page) == "__about" ? 9 : 1);
+          if (id(current_page) != "__about") {
+            for (int i = 0; i < id(menu_length); i++) {
+              if (id(menu_parents)[i] == id(current_page)) children++;
+            }
+          }
+          if (children > 0) {
+            id(cursor) = (id(cursor) + direction + children) % children;
+          } else {
+            id(cursor) = 0;
+          }
+
+  - id: back_menu
+    mode: restart
+    then:
+      - lambda: |-
+          bool was_asleep = id(screen_sleep);
+          id(screen_sleep) = false;
+          id(last_input) = millis();
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            id(feedback_suppressed) = true;
+            return;
+          }
+          if (id(current_page).empty()) return;
+          if (id(current_page) == "__about") {
+            id(previous_page) = "__about";
+            id(previous_cursor) = id(cursor);
+            id(current_page) = "";
+            int count = 0;
+            for (int i = 0; i < id(menu_length); i++)
+              if (id(menu_parents)[i].empty()) count++;
+            id(cursor) = count;
+            id(transition_direction) = -1;
+            id(transition_started) = millis();
+            return;
+          }
+          id(previous_page) = id(current_page);
+          id(previous_cursor) = id(cursor);
+          std::string parent = "";
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_ids)[i] == id(current_page)) {
+              parent = id(menu_parents)[i];
+              break;
+            }
+          }
+          const std::string opened_page = id(current_page);
+          id(current_page) = parent;
+          // Highlight the submenu we just left in its parent page.
+          int position = parent.empty() ? 0 : 1;
+          id(cursor) = 0;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != parent) continue;
+            if (id(menu_ids)[i] == opened_page) {
+              id(cursor) = position;
+              break;
+            }
+            position++;
+          }
+          id(transition_direction) = -1;
+          id(transition_started) = millis();
+
+  - id: select_menu
+    mode: restart
+    then:
+      - lambda: |-
+          bool was_asleep = id(screen_sleep);
+          id(screen_sleep) = false;
+          id(last_input) = millis();
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
+
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            id(feedback_suppressed) = true;
+            return;
+          }
+          if (id(control_loading)) return;
+          if (id(control_open)) {
+            id(control_editing) = !id(control_editing);
+            return;
+          }
+          if (id(current_page) == "__about") {
+            if (id(cursor) == 0) id(back_menu).execute();
+            return;
+          }
+          if (!id(current_page).empty() && id(cursor) == 0) {
+            id(back_menu).execute();
+            return;
+          }
+          int child = id(current_page).empty() ? 0 : 1;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != id(current_page)) continue;
+            if (child++ != id(cursor)) continue;
+            for (int j = 0; j < id(menu_length); j++) {
+              if (id(menu_parents)[j] == id(menu_ids)[i]) {
+                id(previous_page) = id(current_page);
+                id(previous_cursor) = id(cursor);
+                id(current_page) = id(menu_ids)[i];
+                id(cursor) = 0;
+                id(transition_direction) = 1;
+                id(transition_started) = millis();
+                return;
+              }
+            }
+            id(pending_item) = id(menu_ids)[i];
+            id(feedback_item) = id(menu_labels)[i];
+            id(feedback_message).clear();
+            id(feedback_suppressed) = false;
+            id(feedback_mode) = 1;
+            id(send_selection).execute();
+            return;
+          }
+          // Permanent last item in the root menu.
+          if (id(current_page).empty() && child == id(cursor)) {
+            id(previous_page) = "";
+            id(previous_cursor) = id(cursor);
+            id(current_page) = "__about";
+            id(cursor) = 0;
+            id(transition_direction) = 1;
+            id(transition_started) = millis();
+          }
+
+  - id: long_press
+    mode: restart
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          const bool was_asleep = id(screen_sleep);
+          id(last_input) = now;
+          id(screen_sleep) = false;
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
+          if (id(feedback_mode) != 0) {
+            id(feedback_mode) = 0;
+            return;
+          }
+          if (id(control_loading) || id(control_open)) {
+            id(control_loading) = false;
+            id(control_open) = false;
+            id(control_editing) = false;
+            return;
+          }
+          if (id(current_page) == "__about" || (!id(current_page).empty() && id(cursor) == 0)) {
+            id(back_menu).execute(); return;
+          }
+          int position = id(current_page).empty() ? 0 : 1;
+          for (int i = 0; i < id(menu_length); i++) {
+            if (id(menu_parents)[i] != id(current_page)) continue;
+            if (position++ != id(cursor)) continue;
+            if (id(menu_control_flags)[i] != 0) {
+              id(control_slot) = i;
+              id(control_loading) = true;
+              id(control_started) = now;
+              id(send_open_control).execute();
+              return;
+            }
+            break;
+          }
+          id(back_menu).execute();
+
+  - id: send_open_control
+    mode: restart
+    then:
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - homeassistant.event:
+                event: esphome.ha_menu_controls_open
+                data:
+                  device: ${device_name}
+                data_template:
+                  item_id: "{{ item_key }}"
+                variables:
+                  item_key: !lambda 'return id(menu_ids)[id(control_slot)];'
+          else:
+            - lambda: |-
+                id(control_loading) = false;
+                id(feedback_mode) = 3;
+                id(feedback_message) = "HA deconnecte";
+                id(feedback_started) = millis();
+
+  - id: send_adjust
+    mode: queued
+    max_runs: 20
+    parameters:
+      item_key: string
+      field_key: string
+      field_value: string
+    then:
+      - homeassistant.event:
+          event: esphome.ha_menu_control_adjust
+          data:
+            device: ${device_name}
+          data_template:
+            item_id: "{{ item_key }}"
+            field: "{{ field_key }}"
+            value: "{{ field_value }}"
+          variables:
+            item_key: !lambda 'return item_key;'
+            field_key: !lambda 'return field_key;'
+            field_value: !lambda 'return field_value;'
+
+  - id: send_selection
+    mode: restart
+    then:
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - lambda: id(led_busy) = true;
+            - script.execute: pending_led
+            - script.execute: pending_timeout
+            - homeassistant.event:
+                event: esphome.ha_menu_selected
+                data:
+                  device: ${device_name}
+                data_template:
+                  item_id: "{{ selected_id }}"
+                variables:
+                  selected_id: !lambda 'return id(pending_item);'
+          else:
+            - lambda: |-
+                id(pending_item).clear();
+                id(feedback_mode) = 3;
+                id(feedback_message) = "HA deconnecte";
+                id(feedback_started) = millis();
+            - script.execute: error_led
+
+  - id: boot_led
+    mode: restart
+    then:
+      - lambda: id(led_busy) = true;
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 55%
+                green: 0%
+                blue: 100%
+                brightness: 30%
+                transition_length: 0s
+            - delay: 100ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 90ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: notify_led
+    mode: restart
+    then:
+      - lambda: id(led_busy) = true;
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - repeat:
+          count: 3
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 100%
+                green: 35%
+                blue: 0%
+                brightness: 40%
+                transition_length: 0s
+            - delay: 180ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 150ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: identify_led
+    mode: restart
+    then:
+      - lambda: id(led_busy) = true;
+      - light.turn_on:
+          id: status_rgb
+          red: 60%
+          green: 0%
+          blue: 100%
+          brightness: 35%
+          effect: Working
+      - delay: 2200ms
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: pending_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: status_rgb
+          red: 0%
+          green: 0%
+          blue: 100%
+          brightness: 30%
+          effect: Working
+
+  - id: pending_timeout
+    mode: restart
+    then:
+      - delay: 10s
+      - lambda: |-
+          id(pending_item).clear();
+          if (!id(feedback_suppressed)) {
+            id(feedback_mode) = 3;
+            id(feedback_message) = "Delai HA depasse";
+            id(feedback_started) = millis();
+          }
+      - script.execute: error_led
+
+  - id: success_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 0%
+                green: 100%
+                blue: 0%
+                brightness: 40%
+                transition_length: 0s
+            - delay: 160ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 120ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: error_led
+    mode: restart
+    then:
+      - light.turn_on:
+          id: status_rgb
+          effect: none
+      - repeat:
+          count: 3
+          then:
+            - light.turn_on:
+                id: status_rgb
+                red: 100%
+                green: 0%
+                blue: 0%
+                brightness: 40%
+                transition_length: 0s
+            - delay: 150ms
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+            - delay: 140ms
+      - lambda: id(led_busy) = false;
+      - script.execute: restore_led
+
+  - id: restore_led
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return id(screen_sleep) || (id(base_red) == 0 && id(base_green) == 0 && id(base_blue) == 0);'
+          then:
+            - light.turn_off:
+                id: status_rgb
+                transition_length: 0s
+          else:
+            - light.turn_on:
+                id: status_rgb
+                effect: none
+            - light.turn_on:
+                id: status_rgb
+                red: !lambda 'return id(base_red) / 255.0f;'
+                green: !lambda 'return id(base_green) / 255.0f;'
+                blue: !lambda 'return id(base_blue) / 255.0f;'
+                brightness: 35%
+                transition_length: 0s

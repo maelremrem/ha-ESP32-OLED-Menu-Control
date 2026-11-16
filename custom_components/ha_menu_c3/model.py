@@ -7,6 +7,12 @@ import re
 MAX_ITEMS = 32
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 SERVICE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+CONTROL_KEYS = {
+    "brightness": "light", "color_temp": "light", "color": "light",
+    "temperature": "climate", "hvac_mode": "climate",
+    "humidity": "humidifier", "humidifier_mode": "humidifier",
+}
+
 
 
 class MenuValidationError(ValueError):
@@ -33,6 +39,7 @@ def validate_config(config: dict) -> dict:
         service = raw.get("service", "")
         entity = raw.get("entity_id", "")
         data = raw.get("data", {})
+        controls = raw.get("controls", {})
         if not isinstance(ident, str) or not ID_PATTERN.fullmatch(ident):
             raise MenuValidationError("Identifiant invalide (lettres, chiffres, _ et -)")
         if ident == "__about":
@@ -58,9 +65,20 @@ def validate_config(config: dict) -> dict:
             raise MenuValidationError(f"Données d'action non JSON : {ident}") from err
         if len(serialized.encode("utf-8")) > 4096:
             raise MenuValidationError(f"Données d'action trop longues : {ident}")
+        if not isinstance(controls, dict) or any(
+            key not in CONTROL_KEYS or type(value) is not bool
+            for key, value in controls.items()
+        ):
+            raise MenuValidationError(f"Commandes avancees invalides : {ident}")
+        active_controls = {key: True for key, value in controls.items() if value}
+        if active_controls:
+            domain = entity.split(".", 1)[0]
+            if any(CONTROL_KEYS[key] != domain for key in active_controls):
+                raise MenuValidationError(f"Commandes incompatibles avec l'entite : {ident}")
         entries.append({
             "id": ident, "label": label.strip(), "parent": parent,
             "service": service, "entity_id": entity.strip(), "data": data,
+            "controls": active_controls,
         })
 
     by_id = {item["id"]: item for item in entries}

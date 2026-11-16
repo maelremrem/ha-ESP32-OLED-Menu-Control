@@ -29,6 +29,7 @@ from .const import (
     PANEL_URL,
 )
 from .model import DEFAULT_CONFIG, MenuValidationError, validate_config
+from .controls import adjustment, attributes_payload
 
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
@@ -194,6 +195,13 @@ class MenuManager:
                 await self._call_esp("set_menu_status", {
                     "slot": slot, "status": self.item_state(item),
                 })
+                await self._call_esp("set_control_flags", {
+                    "slot": slot, "flags": self.control_payload(item)["flags"],
+                })
+
+    def control_payload(self, item: dict) -> dict:
+        state = self.hass.states.get(item.get("entity_id", ""))
+        return attributes_payload(item, state)
 
     async def _update_item_state_safe(self, entity_id: str) -> None:
         try:
@@ -214,6 +222,10 @@ class MenuManager:
                         "item_id": item["id"],
                         "parent_id": item["parent"],
                         "label": item["label"],
+                    })
+                for slot, item in enumerate(items):
+                    await self._call_esp("set_control_flags", {
+                        "slot": slot, "flags": self.control_payload(item)["flags"],
                     })
                 await self._call_esp("set_menu_count", {"count": len(items)})
                 for slot, item in enumerate(items):
@@ -315,6 +327,64 @@ class MenuManager:
                 })
             except Exception as err:
                 _LOGGER.warning("Unable to report action result: %s", err)
+
+    async def open_controls(self, item_id: str) -> None:
+        item = next((i for i in self.config["items"] if i["id"] == item_id), None)
+        if item is None:
+            return
+        try:
+            payload = self.control_payload(item)
+            if not payload["flags"]:
+                raise ValueError("Aucun reglage disponible")
+            payload["slot"] = self.config["items"].index(item)
+            await self._call_esp("open_controls", payload)
+        except Exception as err:
+            _LOGGER.debug("Controls unavailable for %s: %s", item_id, err)
+            await self._report_control_error(str(err))
+
+    async def _report_control_error(self, message: str) -> None:
+        try:
+            await self._call_esp("control_error", {"message": str(message)[:80]})
+        except Exception as err:
+            _LOGGER.debug("Control error could not reach OLED: %s", err)
+
+    async def apply_control(self, item_id: str, field: str, value: str) -> None:
+        item = next((i for i in self.config["items"] if i["id"] == item_id), None)
+        try:
+            if item is None:
+                raise ValueError("Entree inconnue")
+            state = self.hass.states.get(item.get("entity_id", ""))
+            if state is None or state.state in ("unavailable", "unknown"):
+                raise ValueError("Appareil indisponible")
+            request = adjustment(item, state, field, value)
+            if not self.hass.services.has_service(request.domain, request.service):
+                raise ValueError("Commande indisponible")
+            # Every encoder detent sends a request. Do not await physical state
+            # convergence: state_changed events report the actual value later.
+            await self.hass.services.async_call(
+                request.domain, request.service, request.data, blocking=False,
+            )
+        except Exception as err:
+            _LOGGER.warning("Control %s/%s rejected: %s", item_id, field, err)
+            await self._report_control_error(str(err))
+
+    @callback
+    def on_controls_open(self, event) -> None:
+        if event.data.get("device") != self.device_name:
+            return
+        item_id = event.data.get("item_id")
+        if isinstance(item_id, str) and item_id:
+            self.hass.async_create_task(self.open_controls(item_id))
+
+    @callback
+    def on_adjust(self, event) -> None:
+        if event.data.get("device") != self.device_name:
+            return
+        item_id = event.data.get("item_id")
+        field = event.data.get("field")
+        value = event.data.get("value")
+        if isinstance(item_id, str) and isinstance(field, str) and isinstance(value, str):
+            self.hass.async_create_task(self.apply_control(item_id, field, value))
 
     @callback
     def on_ready(self, event) -> None:
@@ -469,13 +539,17 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             frontend_url_path=PANEL_URL,
             sidebar_title="HA Menu C3",
             sidebar_icon="mdi:gesture-tap-button",
-            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=4",
+            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=5",
             require_admin=True,
         )
         hass.data[f"{DOMAIN}_panel_registered"] = True
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_READY, manager.on_ready))
     entry.async_on_unload(hass.bus.async_listen(EVENT_SELECTED, manager.on_selected))
+    entry.async_on_unload(hass.bus.async_listen(
+        "esphome.ha_menu_controls_open", manager.on_controls_open))
+    entry.async_on_unload(hass.bus.async_listen(
+        "esphome.ha_menu_control_adjust", manager.on_adjust))
     entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, manager.on_state))
     entry.async_on_unload(hass.bus.async_listen(
         "esphome.ha_menu_sleep_changed", manager.on_sleep_changed))

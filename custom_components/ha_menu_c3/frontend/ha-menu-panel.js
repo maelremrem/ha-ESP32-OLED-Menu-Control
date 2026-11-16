@@ -32,6 +32,10 @@ const STYLES = `
   .tree-row.active { background:color-mix(in srgb,var(--primary-color) 12%,transparent); border-color:color-mix(in srgb,var(--primary-color) 40%,transparent); }
   .tree-handle { cursor:grab; font-size:17px; color:var(--secondary-text-color); padding:3px; user-select:none; }
   .tree-row.dragging { opacity:.4; }
+  .tree-nest { display:flex; align-items:center; gap:3px; flex-shrink:0; }
+  .tree-nest button { padding:2px 5px; min-width:25px; min-height:28px; border:1px solid var(--divider-color); background:var(--card-background-color); color:var(--primary-text-color); border-radius:5px; cursor:pointer; font:inherit; }
+  .tree-nest button:disabled { opacity:.25; cursor:not-allowed; }
+  .tree-nest button:not(:disabled):hover { background:var(--secondary-background-color); }
   .tree-row.drop-before { border-top:3px solid var(--primary-color); }
   .tree-row.drop-after { border-bottom:3px solid var(--primary-color); }
   .tree-row.drop-inside { border:2px dashed var(--primary-color); background:color-mix(in srgb,var(--primary-color) 14%,transparent); }
@@ -76,6 +80,10 @@ const STYLES = `
   .device-picker select { min-width:180px; max-width:300px; background:var(--card-background-color); }
   .diagnostic small { display:block; margin-top:5px; font-size:11px; color:var(--secondary-text-color); overflow-wrap:anywhere; }
   .diagnostic.missing { opacity:.75; }
+  .control-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
+  .control-check { display:flex; align-items:center; gap:8px; padding:9px; border:1px solid var(--divider-color); border-radius:8px; cursor:pointer; }
+  .control-check input { width:auto; margin:0; }
+  .control-check.unsupported { opacity:.55; cursor:not-allowed; }
 
   @media(max-width:790px) { .wrap{padding:12px;} .columns{grid-template-columns:1fr;} h1{font-size:23px;} .form-grid{grid-template-columns:1fr;} }
 `;
@@ -212,7 +220,7 @@ class HAMenuC3Panel extends HTMLElement {
             <button class="btn" data-op="add-root" ${count >= 32 ? "disabled" : ""}>+ Entrée</button>
             <button class="btn" data-op="add-folder" ${count >= 32 ? "disabled" : ""}>+ Sous-menu</button>
           </div>
-          <p class="hint meta">Glisser : réordonner ou déplacer dans un sous-menu. « À propos » reste en dernier.</p>
+          <p class="hint meta">Glisser pour déplacer. → place sous l'entrée précédente ; ← remonte d'un niveau. « À propos » reste en dernier.</p>
         </section>
         <div>
           <section class="panel"><div class="panel-head"><h2>Éditeur d'entrée</h2></div><div id="editor"></div></section>
@@ -257,9 +265,14 @@ class HAMenuC3Panel extends HTMLElement {
     const walk = (parent, level) => {
       for (const item of this.items.filter((i) => i.parent === parent)) {
         const folder = this.isFolder(item);
+        const siblings = this.items.filter(i=>i.parent===item.parent);
+        const prev = siblings[siblings.findIndex(i=>i.id===item.id)-1];
+        const canIndent = !!prev && !prev.service && !this.isDescendant(prev.id,item.id);
         rows.push(`<div role="button" tabindex="0" draggable="true" data-select="${esc(item.id)}" class="tree-row ${item.id === this.selectedId ? "active" : ""}" style="padding-left:${9 + level * 16}px">
           <span class="tree-handle" aria-label="Déplacer">⠿</span><span class="tree-glyph">${folder ? "▸" : "•"}</span>
           <span class="tree-item">${esc(item.label)}<small>${folder ? "Sous-menu" : esc(item.service || "Action non configurée")}</small></span>
+          <span class="tree-nest"><button type="button" data-tree-move="outdent" data-tree-id="${esc(item.id)}" title="Sortir du sous-menu" aria-label="Sortir ${esc(item.label)} du sous-menu" ${item.parent ? "" : "disabled"}>←</button>
+          <button type="button" data-tree-move="indent" data-tree-id="${esc(item.id)}" title="Placer sous l'entrée précédente" aria-label="Placer ${esc(item.label)} dans le sous-menu précédent" ${canIndent ? "" : "disabled"}>→</button></span>
         </div>`);
         walk(item.id, level+1);
       }
@@ -302,6 +315,11 @@ class HAMenuC3Panel extends HTMLElement {
             <option value="switch.turn_on">Allumer une prise / un interrupteur</option>
             <option value="switch.turn_off">Éteindre une prise / un interrupteur</option>
             <option value="homeassistant.toggle">Basculer une entité (universel)</option>
+            <option value="climate.turn_on">Activer un thermostat</option>
+            <option value="climate.turn_off">Arrêter un thermostat</option>
+            <option value="humidifier.toggle">Basculer un humidificateur</option>
+            <option value="humidifier.turn_on">Activer un humidificateur</option>
+            <option value="humidifier.turn_off">Arrêter un humidificateur</option>
             <option value="cover.open_cover">Ouvrir un volet / portail</option>
             <option value="cover.close_cover">Fermer un volet / portail</option>
             <option value="script.turn_on">Lancer un script</option>
@@ -320,6 +338,7 @@ class HAMenuC3Panel extends HTMLElement {
           <div class="hint">Exemple : {"brightness_pct": 60}</div>
         </div>
       </div>
+      ${this.renderControlOptions(item, folder)}
       <div class="small-actions">
         <button class="btn" data-op="add-child" ${this.items.length >= 32 ? "disabled" : ""}>+ Ajouter dans ce menu</button>
         <button class="btn" data-op="move-up">↑ Monter</button>
@@ -327,7 +346,38 @@ class HAMenuC3Panel extends HTMLElement {
         <button class="btn danger" data-op="delete">Supprimer</button>
       </div>`;
     const select = host.querySelector('[data-edit="preset"]');
-    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on"].includes(item.service) ? item.service : "custom";
+    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
+  }
+
+  renderControlOptions(item, folder) {
+    if (folder) return "";
+    const domain = (item.entity_id || "").split(".")[0];
+    const live = this._hass?.states?.[item.entity_id];
+    const attrs = live?.attributes || {};
+    const colorModes = attrs.supported_color_modes || [];
+    const features = Number(attrs.supported_features || 0);
+    const options = {
+      light: [
+        ["brightness", "Intensité 0–255", colorModes.some(m => m !== "onoff")],
+        ["color_temp", "Température (K)", colorModes.includes("color_temp")],
+        ["color", "Couleur", colorModes.some(m => ["hs","xy","rgb","rgbw","rgbww"].includes(m))],
+      ],
+      climate: [
+        ["temperature", "Température cible", !!(features & 1)],
+        ["hvac_mode", "Mode du thermostat", (attrs.hvac_modes || []).length > 0],
+      ],
+      humidifier: [
+        ["humidity", "Humidité cible", !!live],
+        ["humidifier_mode", "Mode", !!(features & 1) && (attrs.available_modes || []).length > 0],
+      ],
+    }[domain] || [];
+    if (!options.length) return "";
+    return `<div class="section"><div class="field"><label>Réglages avec l'encodeur</label>
+      <p class="hint">Appui long sur l'OLED pour ouvrir les réglages. Seules les fonctions disponibles sont proposées.</p>
+      <div class="control-list">${options.map(([key,label,supported])=>`<label class="control-check ${supported?"":"unsupported"}">
+        <input type="checkbox" data-control="${esc(key)}" ${(item.controls || {})[key] ? "checked" : ""} ${supported ? "" : "disabled"}>
+        <span>${esc(label)}${supported ? "" : " · indisponible"}</span>
+      </label>`).join("")}</div></div></div>`;
   }
 
   renderEntityResults(query="") {
@@ -427,7 +477,7 @@ class HAMenuC3Panel extends HTMLElement {
     if (this.items.length >= 32) return this.show("Le firmware accepte 32 entrées au maximum.", "error");
     const uid = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
     const item = {id:uid, label: folder ? "Nouveau sous-menu" : "Nouvelle action", parent,
-      service:"", entity_id:"", data:{}};
+      service:"", entity_id:"", data:{}, controls:{}};
     this.items.push(item);
     if (parent) {
       const parentItem = this.items.find(i => i.id === parent);
@@ -456,6 +506,21 @@ class HAMenuC3Panel extends HTMLElement {
     this.renderTree();
   }
 
+  indentItem(itemId) {
+    const item = this.items.find(i=>i.id===itemId);
+    if (!item) return false;
+    const siblings = this.items.filter(i=>i.parent===item.parent);
+    const prev = siblings[siblings.findIndex(i=>i.id===itemId)-1];
+    if (!prev) { this.show("Aucune entrée précédente.", "error"); return false; }
+    return this.moveTreeItem(itemId, prev.id, "inside");
+  }
+
+  outdentItem(itemId) {
+    const item = this.items.find(i=>i.id===itemId);
+    if (!item || !item.parent) return false;
+    return this.moveTreeItem(itemId, item.parent, "after");
+  }
+
   clearDrag() {
     this.dragId = null;
     this.dropTarget = null;
@@ -465,7 +530,7 @@ class HAMenuC3Panel extends HTMLElement {
 
   onDragStart(event) {
     const row = event.target.closest?.("[data-select]");
-    if (!row || !this.status || !this.commitEditor()) {
+    if (!row || event.target.closest?.("[data-tree-move]") || !this.status || !this.commitEditor()) {
       event.preventDefault();
       return;
     }
@@ -488,7 +553,8 @@ class HAMenuC3Panel extends HTMLElement {
     if (row) {
       const rect = row.getBoundingClientRect();
       const ratio = (event.clientY - rect.top) / rect.height;
-      placement = ratio < 0.27 ? "before" : ratio > 0.73 ? "after" : "inside";
+      const rightSide = event.clientX > rect.left + Math.min(110, rect.width * 0.4);
+      placement = ratio < 0.27 ? "before" : ratio > 0.73 ? "after" : (rightSide ? "inside" : "before");
     }
     const target = row || root;
     target.classList.add(placement === "root" ? "drop-inside" : `drop-${placement}`);
@@ -580,7 +646,18 @@ class HAMenuC3Panel extends HTMLElement {
       this.selected.entity_id = entityOption.dataset.entitySelect;
       const input = this.shadowRoot.querySelector('[data-edit="entity_id"]');
       if (input) input.value = this.selected.entity_id;
-      this.renderEntityResults("");
+      const domain = this.selected.entity_id.split(".")[0];
+      this.selected.controls = Object.fromEntries(Object.entries(this.selected.controls || {})
+        .filter(([key]) => ({light:["brightness","color_temp","color"],climate:["temperature","hvac_mode"],humidifier:["humidity","humidifier_mode"]}[domain] || []).includes(key)));
+      this.renderEditor();
+      return;
+    }
+    const nestButton = event.target.closest("[data-tree-move]");
+    if (nestButton) {
+      if (!this.commitEditor()) return;
+      const id=nestButton.dataset.treeId;
+      if (nestButton.dataset.treeMove === "indent") this.indentItem(id);
+      else this.outdentItem(id);
       return;
     }
     const btn=event.target.closest("[data-op]");
@@ -645,6 +722,11 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onChange(event) {
+    if (event.target.dataset.control && this.selected) {
+      this.selected.controls ||= {};
+      this.selected.controls[event.target.dataset.control] = event.target.checked;
+      return;
+    }
     if (event.target.dataset.devicePicker) {
       this.selectDevice(event.target.value);
       return;
@@ -652,6 +734,7 @@ class HAMenuC3Panel extends HTMLElement {
     const edit=event.target.dataset.edit;
     const item=this.selected;
     if(!item || !edit) return;
+    if(edit === "entity_id") { this.renderEditor(); return; }
     if(edit==="preset") {
       if(event.target.value!=="custom") {
         item.service=event.target.value;
