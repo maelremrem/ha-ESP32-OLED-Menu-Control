@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.1"
+  fw_version: "0.5.2"
 
 esphome:
   name: ${device_name}
@@ -270,6 +270,11 @@ font:
   - file: "gfonts://Roboto"
     id: menu_font
     size: 11
+    glyphsets:
+      - GF_Latin_Core
+  - file: "gfonts://Roboto"
+    id: footer_font
+    size: 8
     glyphsets:
       - GF_Latin_Core
 
@@ -592,14 +597,17 @@ display:
       it.fill(COLOR_OFF);
       if (id(screen_sleep)) return;
       const uint32_t now = millis();
-      // Three compact legends: rotate, short click, long press.
+      // Inverted 11-pixel footer with fixed-width, clipped command slots.
       auto draw_footer = [&](const char *rotate, const char *click, const char *hold) {
-        it.line(0, 52, 127, 52);
-        it.print(2, 53, id(title_font), (std::string("R:") + rotate).c_str());
-        it.vertical_line(43, 54, 8);
-        it.print(47, 53, id(title_font), (std::string("C:") + click).c_str());
-        it.vertical_line(83, 54, 8);
-        it.print(87, 53, id(title_font), (std::string("L:") + hold).c_str());
+        it.filled_rectangle(0, 53, 128, 11, COLOR_ON);
+        it.print(2, 55, id(footer_font), COLOR_OFF, "R");
+        it.print(13, 55, id(footer_font), COLOR_OFF, rotate);
+        it.vertical_line(42, 54, 9, COLOR_OFF);
+        it.print(46, 55, id(footer_font), COLOR_OFF, "C");
+        it.print(56, 55, id(footer_font), COLOR_OFF, click);
+        it.vertical_line(83, 54, 9, COLOR_OFF);
+        it.print(87, 55, id(footer_font), COLOR_OFF, "L");
+        it.print(97, 55, id(footer_font), COLOR_OFF, hold);
       };
       if ((uint32_t)(now - id(boot_started)) < 750) {
         it.print(19, 13, id(menu_font), "HA MENU C3");
@@ -615,13 +623,13 @@ display:
           it.print(3, 2, id(title_font), "EN COURS");
           it.line(0, 14, 127, 14);
           it.print(4, 24, id(menu_font), "Commande envoyee...");
-          it.filled_rectangle((now / 9U) % 118U, 52, 10, 3);
+          it.filled_rectangle((now / 9U) % 118U, 47, 10, 3);
         } else {
           const bool ok = mode == 2;
           const uint32_t elapsed = (uint32_t)(now - id(feedback_started));
           // Grow the center ring, then draw the check/cross in two strokes.
-          const int radius = std::clamp((int)(elapsed / 14U), 1, 15);
-          it.circle(64, 20, radius, COLOR_ON);
+          const int radius = std::clamp((int)(elapsed / 14U), 1, 13);
+          it.circle(64, 17, radius, COLOR_ON);
           auto stroke = [&](int x1, int y1, int x2, int y2, uint32_t start_ms) {
             const int step = std::clamp((int)elapsed - (int)start_ms, 0, 180);
             if (step == 0) return;
@@ -630,15 +638,15 @@ display:
             it.line(x1, y1, ex, ey, COLOR_ON);
           };
           if (ok) {
-            stroke(56, 20, 62, 26, 160);
-            stroke(62, 26, 74, 13, 340);
-            it.print(64, 43, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "TERMINE");
+            stroke(56, 17, 62, 23, 160);
+            stroke(62, 23, 74, 10, 340);
+            it.print(64, 32, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "TERMINE");
             if (!id(feedback_item).empty())
-              it.print(64, 55, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
-                       id(feedback_item).substr(0, 18).c_str());
+              it.print(64, 44, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER,
+                       id(feedback_item).substr(0, 22).c_str());
           } else {
-            stroke(57, 13, 71, 27, 160);
-            stroke(71, 13, 57, 27, 340);
+            stroke(57, 10, 71, 24, 160);
+            stroke(71, 10, 57, 24, 340);
             std::string msg = id(feedback_message);
             if (msg.empty()) msg = "Commande refusee";
             // Two centered lines below the icon, kept inside 128x64.
@@ -647,16 +655,17 @@ display:
               const int space = (int)msg.rfind(' ', cut);
               if (space > 8) cut = space;
             }
-            it.print(64, 41, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+            it.print(64, 33, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
                      msg.substr(0, cut).c_str());
             if (cut < (int)msg.size()) {
               int pos = cut;
               while (pos < (int)msg.size() && msg[pos] == ' ') pos++;
-              it.print(64, 53, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+              it.print(64, 44, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER,
                        msg.substr(pos, 22).c_str());
             }
           }
         }
+        draw_footer("FERM", "FERM", "FERM");
         return;
       }
 
@@ -664,7 +673,8 @@ display:
         it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "REGLAGES");
         it.line(0, 15, 127, 15);
         it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "Chargement...");
-        it.filled_rectangle(16 + ((now / 12U) % 86U), 53, 12, 3);
+        it.filled_rectangle(16 + ((now / 12U) % 86U), 47, 12, 3);
+        draw_footer("--", "--", "ANN");
         return;
       }
       if (id(control_open)) {
@@ -701,8 +711,8 @@ display:
           const int thumb = std::max(6, (36 * visible) / total);
           it.filled_rectangle(126, 15 + ((36 - thumb) * start) / (total - visible), 2, thumb, COLOR_ON);
         }
-        draw_footer(id(control_editing) ? "+/-" : "NAV",
-                    id(control_editing) ? "FIN" : "EDIT", "RET");
+        draw_footer(id(control_editing) ? "REGL" : "NAV",
+                    id(control_editing) ? "FIN" : "MOD", "RET");
         return;
       }
 
@@ -809,20 +819,38 @@ display:
       } else render_page(id(current_page), 0, id(cursor));
 
       const bool about_screen = id(current_page) == "__about";
-      bool has_controls = false;
-      if (!about_screen) {
-        int index = id(current_page).empty() ? 0 : 1;
+      const bool root = id(current_page).empty();
+      const bool back_item = !root && !about_screen && id(cursor) == 0;
+      int selected_slot = -1;
+      if (!about_screen && !back_item) {
+        int position = root ? 0 : 1;
         for (int i = 0; i < id(menu_length); i++) {
           if (id(menu_parents)[i] != id(current_page)) continue;
-          if (index++ == id(cursor)) {
-            has_controls = id(menu_control_flags)[i] != 0;
+          if (position++ == id(cursor)) {
+            selected_slot = i;
             break;
           }
         }
       }
-      draw_footer(about_screen ? "DEF" : "NAV",
-                  about_screen ? "RET" : "OK",
-                  has_controls ? "REGL" : (id(current_page).empty() ? "--" : "RET"));
+      bool is_submenu = false;
+      if (selected_slot >= 0) {
+        for (int j = 0; j < id(menu_length); j++) {
+          if (id(menu_parents)[j] == id(menu_ids)[selected_slot]) {
+            is_submenu = true;
+            break;
+          }
+        }
+      }
+      const bool has_controls = selected_slot >= 0 &&
+                                id(menu_control_flags)[selected_slot] != 0;
+      const char *click_action = "--";
+      if (about_screen) click_action = id(cursor) == 0 ? "RET" : "--";
+      else if (back_item) click_action = "RET";
+      else if (is_submenu || (root && selected_slot == -1)) click_action = "OUV";
+      else if (selected_slot >= 0) click_action = "ACT";
+
+      draw_footer("NAV", click_action,
+                  has_controls ? "REGL" : (!root ? "RET" : "--"));
 
 interval:
   - interval: 1s
