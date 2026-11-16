@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.5"
+  fw_version: "0.5.6"
 
 esphome:
   name: ${device_name}
@@ -587,18 +587,6 @@ display:
       it.fill(COLOR_OFF);
       if (id(screen_sleep)) return;
       const uint32_t now = millis();
-      // Compact inverse footer with short labels fitted to three slots.
-      auto draw_footer = [&](const char *rotate, const char *click, const char *hold) {
-        it.filled_rectangle(0, 53, 128, 11, COLOR_ON);
-        it.print(2, 55, id(footer_font), COLOR_OFF, "R");
-        it.print(13, 55, id(footer_font), COLOR_OFF, rotate);
-        it.vertical_line(42, 54, 9, COLOR_OFF);
-        it.print(46, 55, id(footer_font), COLOR_OFF, "C");
-        it.print(56, 55, id(footer_font), COLOR_OFF, click);
-        it.vertical_line(83, 54, 9, COLOR_OFF);
-        it.print(87, 55, id(footer_font), COLOR_OFF, "L");
-        it.print(97, 55, id(footer_font), COLOR_OFF, hold);
-      };
       // Stay on the boot screen until the integration commits a full sync.
       if (!id(menu_synced)) {
         if ((uint32_t)(now - id(sync_wait_started)) >= 30000U) {
@@ -692,7 +680,6 @@ display:
             }
           }
         }
-        draw_footer("FERM", "FERM", "FERM");
         return;
       }
 
@@ -701,7 +688,6 @@ display:
         it.line(0, 15, 127, 15);
         it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "Chargement...");
         it.filled_rectangle(16 + ((now / 12U) % 86U), 47, 12, 3);
-        draw_footer("--", "--", "ANN");
         return;
       }
       if (id(control_open)) {
@@ -709,16 +695,17 @@ display:
         if (title.size() > 18) title = title.substr(0, 18);
         it.print(2, 0, id(title_font), title.c_str());
         it.line(0, 13, 127, 13);
-        const int total = (int)id(ctrl_fields).size();
-        const int visible = 3;
+        // Row 0 is always "< Retour"; subsequent rows map to control fields.
+        const int total = (int)id(ctrl_fields).size() + 1;
+        const int visible = 4;
         const int start = std::clamp(id(control_cursor) - 1, 0, std::max(0, total - visible));
         for (int row = start; row < std::min(total, start + visible); row++) {
           const int y = 15 + (row - start) * 12;
-          const int field = id(ctrl_fields)[row];
+          const int field = row == 0 ? 0 : id(ctrl_fields)[row - 1];
           const bool active = row == id(control_cursor);
           const auto color = active ? COLOR_OFF : COLOR_ON;
           if (active) it.filled_rectangle(0, y, 125, 12, COLOR_ON);
-          const char *label = "";
+          const char *label = row == 0 ? "< Retour" : "";
           std::string value = "";
           switch (field) {
             case 1: label = "Intensite"; value = std::to_string((id(ctrl_brightness) * 100 + 127) / 255) + "%"; break;
@@ -735,11 +722,9 @@ display:
           if (active && id(control_editing)) it.rectangle(0, y, 125, 12, COLOR_OFF);
         }
         if (total > visible) {
-          const int thumb = std::max(6, (36 * visible) / total);
-          it.filled_rectangle(126, 15 + ((36 - thumb) * start) / (total - visible), 2, thumb, COLOR_ON);
+          const int thumb = std::max(6, (48 * visible) / total);
+          it.filled_rectangle(126, 15 + ((48 - thumb) * start) / (total - visible), 2, thumb, COLOR_ON);
         }
-        draw_footer(id(control_editing) ? "REGL" : "NAV",
-                    id(control_editing) ? "FIN" : "MOD", "RET");
         return;
       }
 
@@ -779,7 +764,7 @@ display:
         const bool has_back = !page.empty();
         // "A propos" is a permanent root entry and doesn't consume menu slots.
         const int total = about ? 9 : child_count + (has_back ? 1 : 0) + (page.empty() ? 1 : 0);
-        const int visible = 3;
+        const int visible = 4;
         const int start = std::clamp(selection - 1, 0, std::max(0, total - visible));
         auto draw_row = [&](int position, const std::string &label,
                             const std::string &state, bool submenu, bool controls) {
@@ -836,7 +821,7 @@ display:
           if (page.empty()) draw_row(pos, "A Propos", "", true, false);
         }
         if (total > visible) {
-          const int track = 36;
+          const int track = 48;
           const int thumb = std::max(6, track * visible / total);
           const int y = 16 + (track - thumb) * start / (total - visible);
           it.vertical_line(x + 127, 16, track, COLOR_ON);
@@ -855,40 +840,6 @@ display:
           render_page(id(current_page), -128 + dx, id(cursor));
         }
       } else render_page(id(current_page), 0, id(cursor));
-
-      const bool about_screen = id(current_page) == "__about";
-      const bool root = id(current_page).empty();
-      const bool back_item = !root && !about_screen && id(cursor) == 0;
-      int selected_slot = -1;
-      if (!about_screen && !back_item) {
-        int position = root ? 0 : 1;
-        for (int i = 0; i < id(menu_length); i++) {
-          if (id(menu_parents)[i] != id(current_page)) continue;
-          if (position++ == id(cursor)) {
-            selected_slot = i;
-            break;
-          }
-        }
-      }
-      bool is_submenu = false;
-      if (selected_slot >= 0) {
-        for (int j = 0; j < id(menu_length); j++) {
-          if (id(menu_parents)[j] == id(menu_ids)[selected_slot]) {
-            is_submenu = true;
-            break;
-          }
-        }
-      }
-      const bool has_controls = selected_slot >= 0 &&
-                                id(menu_control_flags)[selected_slot] != 0;
-      const char *click_action = "--";
-      if (about_screen) click_action = id(cursor) == 0 ? "RET" : "--";
-      else if (back_item) click_action = "RET";
-      else if (is_submenu || (root && selected_slot == -1)) click_action = "OUV";
-      else if (selected_slot >= 0) click_action = "ACT";
-
-      draw_footer("NAV", click_action,
-                  has_controls ? "REGL" : (!root ? "RET" : "--"));
 
 interval:
   - interval: 1s
@@ -965,12 +916,12 @@ script:
           if (id(control_loading)) return;
           if (id(control_open)) {
             if (!id(control_editing)) {
-              if (!id(ctrl_fields).empty())
-                id(control_cursor) = (id(control_cursor) + direction + (int)id(ctrl_fields).size()) % (int)id(ctrl_fields).size();
+              const int total = (int)id(ctrl_fields).size() + 1;
+              id(control_cursor) = (id(control_cursor) + direction + total) % total;
               return;
             }
-            if (id(ctrl_fields).empty()) return;
-            const int field = id(ctrl_fields)[id(control_cursor)];
+            if (id(control_cursor) == 0 || id(control_cursor) > (int)id(ctrl_fields).size()) return;
+            const int field = id(ctrl_fields)[id(control_cursor) - 1];
             id(ctrl_field).clear();
             int current = 0;
             switch (field) {
@@ -1096,6 +1047,11 @@ script:
           }
           if (id(control_loading)) return;
           if (id(control_open)) {
+            if (!id(control_editing) && id(control_cursor) == 0) {
+              id(control_open) = false;
+              id(control_editing) = false;
+              return;
+            }
             id(control_editing) = !id(control_editing);
             return;
           }
