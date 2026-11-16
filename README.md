@@ -4,7 +4,7 @@ A Home Assistant custom integration for the **ESP32-C3 SuperMini**, a **SSD1306 
 
 Build an OLED menu from Home Assistant without reflashing the ESP32. Add, remove, rename, reorder and nest menu entries, then associate items with Home Assistant actions, scripts, lights, scenes, etc. Configure the steady RGB status color, with temporary action animations handled by ESPHome.
 
-> **Status:** Early v0.1.0 integration. Menu validation has automated tests; the Home Assistant UI and firmware pairing still need real-device testing.
+> **Status:** v0.2.0 integration. Configuration and YAML syntax tests pass; real-device verification is still required for the new V5 features.
 
 ## Installation with HACS (custom repository)
 
@@ -21,12 +21,15 @@ The integration is installed at `custom_components/ha_menu_c3/`. The sample ESPH
 
 ## Required ESPHome firmware
 
-Use the working **V4** from [`esphome/ha-menu-c3.yaml`](esphome/ha-menu-c3.yaml). It provides:
+Use the updated **V5** from [`esphome/ha-menu-c3.yaml`](esphome/ha-menu-c3.yaml). It provides:
 
-- Native ESPHome API commands: `set_menu_item`, `set_menu_count`, `set_base_led`, `play_led_animation`, `action_result`.
+- Native ESPHome API commands: `set_menu_item`, `set_menu_count`, `set_base_led`, `play_led_animation`, `action_result`, `set_sleep_timeout`, `set_extension_status`, `extension_heartbeat`.
 - `esphome.ha_menu_ready` and `esphome.ha_menu_selected` events.
 - Up to 32 menu entries with nested submenus, `< Retour`, encoder filtering and OLED transitions.
 - Persistent status RGB and temporary action animations.
+- Shared OLED + RGB sleep timer (0 = never), hardware OLED power-off, and a proportional OLED scrollbar.
+- ESPHome diagnostic entities: Wi-Fi signal, uptime, IP address, extension connectivity, last menu-sync timestamp.
+- ESPHome config entities: `number` for sleep timeout and `button` to identify the device.
 
 Keep your existing ESPHome secrets names:
 
@@ -66,19 +69,33 @@ Power the OLED and encoder from 3.3 V, the WS2812B from 5 V and connect grounds.
 - **Save:** persist the configuration in Home Assistant and attempt immediate sync to ESPHome.
 - **Sync:** resend the menu to the device.
 - **Identify:** trigger the purple identifying LED animation.
+- **Searchable entity picker:** search by friendly name or entity ID; `switch.*` smart plugs are included, with `homeassistant.toggle` offered for plugs exposed under other domains.
+- **Configuration & diagnostics:** set the **shared OLED + LED timeout**, identify the hardware, and view signal, uptime, IP and integration sync/connection states.
+- **Sleep:** default 30 seconds; 0 disables sleep. Sleep settings are saved in the integration and synchronized back from the ESPHome number entity when changed there.
 
-The ESPHome V4 firmware keeps the menu in RAM and loads a demo menu on boot. **Home Assistant is the source of truth** and resends the saved menu when the ESPHome node connects.
+The ESPHome V5 firmware keeps the menu in RAM and loads a demo menu on boot. **Home Assistant is the source of truth** and resends the saved menu when the ESPHome node connects.
 
 > **Security:** Be careful with sensitive actions (garage doors, locks, alarms). This version does not require confirmation on the OLED before calling the action.
 
-## Limitations of v0.1.0
+## Upgrading from V4 / v0.1.0
+
+1. Download/update the HACS integration from this repository (v0.2.0) and **restart Home Assistant**.
+2. Copy `esphome/ha-menu-c3.yaml` into the device's ESPHome configuration and flash **V5** once (OTA works). Keep the existing `api_encryption_key` and `ota_password` secrets unchanged.
+3. In **HA Menu C3 → Configuration & diagnostics**, set the sleep timeout (seconds). It applies to **both** OLED and RGB LED. `0` leaves both always active.
+4. Find the ESPHome device diagnostic entities (they may be hidden by default under the device's diagnostic section): Wi-Fi Signal, Uptime, IP Address, Extension Connected, Extension Last Update. The device also gains a `Sleep Timeout` number and `Identify` button.
+5. Verify the extension sync status; the integration requires V5 commands to report successful sync.
+
+The OLED and LED sleep together, while transient identification/notifications can briefly light the LED during sleep. A knob/button interaction wakes the device without triggering the menu action. The displayed "Extension Last Update" means **last successful menu/config sync**, not an available software update in HACS. The extension connection diagnostic uses a 30-second heartbeat with a 90-second timeout.
+
+## Limitations of v0.2.0
 
 - Supports one ESP32-C3 node per configured integration (single config entry).
-- A submenu must have at least one child to open on the V4 firmware.
+- A submenu must have at least one child to open on the V5 firmware.
 - The menu holds at most 32 entries in total and 8 levels of nesting.
 - ESPHome reports accepted command success, not necessarily completion of asynchronous scripts.
 - Action result animation times out if the service is still busy after the firmware timeout.
 - Browser UI and Home Assistant lifecycle compatibility require device testing before considering the integration stable.
+- Diagnostics in the editor look up the default ESPHome entity IDs. If you renamed them, access their values directly in the device's Home Assistant diagnostic entities.
 
 ## Troubleshooting
 
@@ -96,7 +113,7 @@ node --check custom_components/ha_menu_c3/frontend/ha-menu-panel.js
 
 ```text
 custom_components/ha_menu_c3/   # HACS installs this folder only
-esphome/ha-menu-c3.yaml          # Example firmware V4
+esphome/ha-menu-c3.yaml          # Example firmware V5
 examples/                        # Example menus and actions
 tests/                           # Configuration model unit tests
 hacs.json                        # HACS metadata

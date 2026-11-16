@@ -53,6 +53,17 @@ const STYLES = `
   .led-grid input[type=color] { height:42px; cursor:pointer; padding:4px; }
   .kbd { padding:2px 5px; border:1px solid var(--divider-color); border-radius:4px; font-size:11px; }
   .meta { margin-top:12px; border-top:1px solid var(--divider-color); padding-top:12px; }
+  .tabs { display:flex; gap:8px; border-bottom:1px solid var(--divider-color); margin:0 0 16px; padding-bottom:8px; }
+  .tab.active { border-color:var(--primary-color); color:var(--primary-color); font-weight:600; }
+  .entity-results { max-height:230px; overflow-y:auto; border:1px solid var(--divider-color); border-radius:8px; margin-top:5px; }
+  .entity-option { width:100%; display:flex; align-items:center; gap:9px; text-align:left; border:0; border-bottom:1px solid var(--divider-color); padding:8px 10px; background:var(--card-background-color); color:var(--primary-text-color); cursor:pointer; font:inherit; }
+  .entity-option:hover,.entity-option:focus { background:var(--secondary-background-color); }
+  .entity-option:last-child { border-bottom:0; }
+  .entity-option span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .entity-option small { display:block; color:var(--secondary-text-color); font-size:11px; }
+  .diagnostics { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+  .diagnostic { border:1px solid var(--divider-color); border-radius:10px; padding:12px; min-width:0; }
+  .diagnostic strong { display:block; margin-top:3px; overflow-wrap:anywhere; }
   @media(max-width:790px) { .wrap{padding:12px;} .columns{grid-template-columns:1fr;} h1{font-size:23px;} .form-grid{grid-template-columns:1fr;} }
 `;
 
@@ -65,6 +76,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.addEventListener("change", (event) => this.onChange(event));
     this.status = null;
     this.selectedId = null;
+    this.activeTab = "menus";
     this.notice = "";
     this.noticeType = "";
     this.busy = false;
@@ -134,6 +146,11 @@ class HAMenuC3Panel extends HTMLElement {
         </div>
       </div>
       <div id="notice-host"></div>
+      <nav class="tabs">
+        <button class="btn tab ${this.activeTab === "menus" ? "active" : ""}" data-tab="menus">☰ Menus</button>
+        <button class="btn tab ${this.activeTab === "config" ? "active" : ""}" data-tab="config">⚙ Configuration & diagnostics</button>
+      </nav>
+      ${this.activeTab === "menus" ? `
       <div class="columns">
         <section class="panel">
           <div class="panel-head"><h2>Arborescence</h2><span class="pill">${count}/32</span></div>
@@ -142,18 +159,29 @@ class HAMenuC3Panel extends HTMLElement {
             <button class="btn" data-op="add-root" ${count >= 32 ? "disabled" : ""}>+ Entrée</button>
             <button class="btn" data-op="add-folder" ${count >= 32 ? "disabled" : ""}>+ Sous-menu</button>
           </div>
-          <p class="hint meta">Sélectionne un item pour l'éditer. Les flèches changent son ordre dans le menu. Un sous-menu doit contenir au moins une entrée pour s'ouvrir avec le firmware V4.</p>
+          <p class="hint meta">Sélectionne une entrée pour l'éditer. Les flèches changent son ordre. Les sous-menus affichent automatiquement &lt; Retour.</p>
         </section>
         <div>
           <section class="panel"><div class="panel-head"><h2>Éditeur d'entrée</h2></div><div id="editor"></div></section>
           <section class="panel" style="margin-top:16px"><h2>LED RGB permanente</h2><div id="led"></div></section>
         </div>
-      </div>
+      </div>` : `
+      <section class="panel">
+        <h2>Configuration du contrôleur</h2>
+        <div id="settings"></div>
+        <div class="small-actions"><button class="btn" data-op="identify">◉ Identifier le contrôleur</button></div>
+      </section>
+      <section class="panel" style="margin-top:16px">
+        <div class="panel-head"><h2>Diagnostics</h2><button class="btn" data-op="refresh">↻ Actualiser</button></div>
+        <div id="diagnostics"></div>
+      </section>`}
     </div>`;
     this.renderNotice();
     this.renderTree();
     this.renderEditor();
     this.renderLed();
+    this.renderSettings();
+    this.renderDiagnostics();
   }
 
   renderNotice() {
@@ -196,9 +224,7 @@ class HAMenuC3Panel extends HTMLElement {
       return;
     }
     const folder = this.isFolder(item);
-    const entityOptions = Object.values(this._hass?.states || {})
-      .sort((a,b) => a.entity_id.localeCompare(b.entity_id))
-      .map((state) => `<option value="${esc(state.entity_id)}" label="${esc(state.attributes?.friendly_name || state.entity_id)}"></option>`).join("");
+    // Search is rendered as a filtered list so friendly names (including plugs) are discoverable.
     const parentChoices = [`<option value="">Racine</option>`, ...this.items
       .filter((i)=> i.id !== item.id && !this.isDescendant(i.id, item.id))
       .map((i) => `<option value="${esc(i.id)}" ${item.parent===i.id ? "selected" : ""}>${esc(i.label)}</option>`)].join("");
@@ -217,7 +243,10 @@ class HAMenuC3Panel extends HTMLElement {
             <option value="light.toggle">Basculer une lumière</option>
             <option value="light.turn_on">Allumer une lumière</option>
             <option value="light.turn_off">Éteindre une lumière</option>
-            <option value="switch.toggle">Basculer un interrupteur</option>
+            <option value="switch.toggle">Basculer une prise / un interrupteur</option>
+            <option value="switch.turn_on">Allumer une prise / un interrupteur</option>
+            <option value="switch.turn_off">Éteindre une prise / un interrupteur</option>
+            <option value="homeassistant.toggle">Basculer une entité (universel)</option>
             <option value="cover.open_cover">Ouvrir un volet / portail</option>
             <option value="cover.close_cover">Fermer un volet / portail</option>
             <option value="script.turn_on">Lancer un script</option>
@@ -227,9 +256,10 @@ class HAMenuC3Panel extends HTMLElement {
           ${folder ? `<div class="hint">Cette entrée contient des enfants : elle fonctionne comme un sous-menu.</div>` : ""}
         </div>
         <div class="field"><label>Service (domaine.action)</label><input data-edit="service" value="${esc(item.service)}" placeholder="light.toggle" ${folder ? "disabled" : ""}></div>
-        <div class="field"><label>Entité cible</label><input data-edit="entity_id" list="ha-menu-entities" autocomplete="off" value="${esc(item.entity_id)}" placeholder="light.salon" ${folder ? "disabled" : ""}>
-          <datalist id="ha-menu-entities">${entityOptions}</datalist>
-          <div class="hint">Commence à taper pour rechercher une entité présente dans Home Assistant.</div>
+        <div class="field"><label>Entité cible</label>
+          <input data-edit="entity_id" data-entity-search="true" autocomplete="off" value="${esc(item.entity_id)}" placeholder="Rechercher par nom ou identifiant (ex : prise, salon...)" ${folder ? "disabled" : ""}>
+          <div id="entity-results"></div>
+          <div class="hint">Recherche dans le nom et l'identifiant. Les prises électriques (switch) sont incluses. Pour les appareils exposés comme lumière, utilise « Basculer une entité (universel) ».</div>
         </div>
         <div class="field"><label>Données supplémentaires (JSON facultatif)</label><textarea data-edit="data" spellcheck="false" ${folder ? "disabled" : ""}>${esc(this.editJson)}</textarea>
           <div class="hint">Exemple : {"brightness_pct": 60}. Utile pour les actions avancées.</div>
@@ -242,7 +272,62 @@ class HAMenuC3Panel extends HTMLElement {
         <button class="btn danger" data-op="delete">Supprimer</button>
       </div>`;
     const select = host.querySelector('[data-edit="preset"]');
-    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on"].includes(item.service) ? item.service : "custom";
+    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on"].includes(item.service) ? item.service : "custom";
+  }
+
+  renderEntityResults(query="") {
+    const host = this.shadowRoot.querySelector("#entity-results");
+    if (!host || !query.trim()) {
+      if (host) host.innerHTML = "";
+      return;
+    }
+    const normalized = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const needle = normalized(query.trim());
+    const domain = (this.selected?.service || "").split(".")[0];
+    const states = Object.values(this._hass?.states || {}).filter((state) => {
+      const name = state.attributes?.friendly_name || "";
+      return normalized(`${state.entity_id} ${name} ${state.attributes?.device_class || ""}`).includes(needle);
+    });
+    states.sort((a,b) => {
+      const rank = (entity) => domain === "homeassistant" || !domain || entity.entity_id.startsWith(domain + ".") ? 0 : 1;
+      return rank(a)-rank(b) || (a.attributes?.friendly_name || a.entity_id).localeCompare(b.attributes?.friendly_name || b.entity_id);
+    });
+    host.innerHTML = states.length ? `<div class="entity-results">${states.slice(0, 60).map((state) => `
+      <button type="button" class="entity-option" data-entity-select="${esc(state.entity_id)}">
+        <span>${esc(state.attributes?.friendly_name || state.entity_id)}<small>${esc(state.entity_id)} · ${esc(state.state)}</small></span>
+      </button>`).join("")}</div>${states.length > 60 ? `<div class="hint">${states.length} résultats : affine la recherche.</div>` : ""}`
+      : `<p class="hint">Aucune entité trouvée. Tu peux toujours saisir son identifiant exact.</p>`;
+  }
+
+  renderSettings() {
+    const host = this.shadowRoot.querySelector("#settings");
+    if (!host || !this.status) return;
+    const seconds = this.status.config.settings?.sleep_seconds ?? 30;
+    host.innerHTML = `<div class="field" style="max-width:340px">
+      <label>Veille OLED et LED RGB (secondes)</label>
+      <input type="number" min="0" max="3600" step="1" data-setting="sleep_seconds" value="${esc(seconds)}">
+      <div class="hint">0 désactive la mise en veille. La LED reprend son état permanent au réveil. Les animations d'identification restent disponibles pendant la veille.</div>
+    </div>`;
+  }
+
+  renderDiagnostics() {
+    const host = this.shadowRoot.querySelector("#diagnostics");
+    if (!host || !this.status) return;
+    const d = this.status.diagnostics || {};
+    const value = (key, fallback="Non disponible") => d[key]?.state && !["unknown","unavailable"].includes(d[key].state)
+      ? `${d[key].state}${d[key].unit ? " " + d[key].unit : ""}` : fallback;
+    const uptime = d.uptime?.state && Number.isFinite(Number(d.uptime.state)) ?
+      `${Math.floor(Number(d.uptime.state)/3600)} h ${Math.floor((Number(d.uptime.state)%3600)/60)} min` : "Non disponible";
+    const cells = [
+      ["Wi-Fi (RSSI)", value("wifi")],
+      ["Uptime", uptime],
+      ["Adresse IP", value("ip")],
+      ["Connexion extension", d.extension_connected?.state === "on" ? "Connectée" : this.status.extension_online ? "Connectée (HA)" : "Déconnectée"],
+      ["Dernière mise à jour", value("extension_update", this.status.last_sync_at || "Jamais")],
+      ["Synchronisation", this.status.sync === "ok" ? "OK" : this.status.error || "En attente"],
+    ];
+    host.innerHTML = `<div class="diagnostics">${cells.map(([key,val]) => `<div class="diagnostic"><span class="sub">${esc(key)}</span><strong>${esc(val)}</strong></div>`).join("")}</div>
+      <p class="hint meta">Les diagnostics du C3 deviennent disponibles après le flash du firmware V5. Ils apparaissent aussi comme entités de diagnostic dans Home Assistant.</p>`;
   }
 
   renderLed() {
@@ -256,7 +341,7 @@ class HAMenuC3Panel extends HTMLElement {
       <div class="led-grid">
         <div class="field"><label>Couleur active</label><input type="color" data-led="on" value="${rgbHex(led.on)}"></div>
         <div class="field"><label>Couleur inactive</label><input type="color" data-led="off" value="${rgbHex(led.off)}"></div>
-      </div><div class="hint">Les animations temporaires bleu/vert/rouge sont gérées directement par le firmware V4 et reviennent ensuite à cette couleur permanente.</div>`;
+      </div><div class="hint">Les animations temporaires bleu/vert/rouge sont gérées directement par le firmware V5 et reviennent ensuite à cette couleur permanente.</div>`;
   }
 
   isDescendant(candidate, ancestor) {
@@ -320,12 +405,27 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onClick(event) {
+    const tab = event.target.closest("[data-tab]");
+    if (tab) {
+      if (this.activeTab === "menus" && !this.commitEditor()) return;
+      this.activeTab = tab.dataset.tab;
+      return this.render();
+    }
+    const entityOption = event.target.closest("[data-entity-select]");
+    if (entityOption && this.selected) {
+      this.selected.entity_id = entityOption.dataset.entitySelect;
+      const input = this.shadowRoot.querySelector('[data-edit="entity_id"]');
+      if (input) input.value = this.selected.entity_id;
+      this.renderEntityResults("");
+      return;
+    }
     const btn=event.target.closest("[data-op]");
     if(btn) {
       const op=btn.dataset.op;
       if(op==="save") return this.save();
       if(op==="sync") return this.sync();
       if(op==="identify") return this.identify();
+      if(op==="refresh") return this.refresh();
       if(op==="add-root") return this.createItem();
       if(op==="add-folder") return this.createItem("",true);
       if(op==="add-child") return this.createItem(this.selectedId);
@@ -359,6 +459,15 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onInput(event) {
+    if (event.target.dataset.entitySearch) this.renderEntityResults(event.target.value);
+    const setting = event.target.dataset.setting;
+    if (setting && this.status) {
+      const value = Number(event.target.value);
+      if (Number.isInteger(value) && value >= 0 && value <= 3600) {
+        this.status.config.settings ||= {};
+        this.status.config.settings[setting] = value;
+      }
+    }
     const edit=event.target.dataset.edit;
     const item=this.selected;
     if(item && edit && edit!=="preset" && edit!=="data" && edit!=="parent") {
@@ -421,6 +530,21 @@ class HAMenuC3Panel extends HTMLElement {
       this.render();
     } catch(err) {this.show(`Erreur : ${err.message || err}`,"error");}
     finally {this.busy=false;}
+  }
+
+  async refresh() {
+    if (this.busy) return;
+    try {
+      const remote = await this.call("ha_menu_c3/get");
+      // Keep unsaved local edits; refresh only live status and diagnostics.
+      this.status.sync = remote.sync;
+      this.status.error = remote.error;
+      this.status.last_sync_at = remote.last_sync_at;
+      this.status.extension_online = remote.extension_online;
+      this.status.diagnostics = remote.diagnostics;
+      this.renderDiagnostics();
+      this.renderNotice();
+    } catch(err) { this.show(`Diagnostics indisponibles : ${err.message || err}`, "error"); }
   }
 
   async identify() {

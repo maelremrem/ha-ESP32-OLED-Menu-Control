@@ -70,8 +70,7 @@ api:
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
-            id(screen_sleep) = false;
-            id(last_input) = millis();
+            // Passive configuration sync must not wake a sleeping device.
 
     - action: set_menu_count
       description: Set the number of active entries (0 to 32)
@@ -83,8 +82,7 @@ api:
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
-            id(screen_sleep) = false;
-            id(last_input) = millis();
+            // Passive configuration sync must not wake a sleeping device.
 
     - action: set_base_led
       description: Change the persistent LED color (RGB values 0 to 255)
@@ -118,6 +116,29 @@ api:
               lambda: 'return !id(led_busy) && animation == "identify";'
             then:
               - script.execute: identify_led
+
+    - action: set_sleep_timeout
+      description: Set OLED and LED idle timeout (seconds; 0 disables sleep)
+      variables:
+        seconds: int
+      then:
+        - number.set:
+            id: sleep_timeout_number
+            value: !lambda 'return static_cast<float>(std::clamp<int32_t>(seconds, 0, 3600));'
+
+    - action: set_extension_status
+      description: Report the latest integration synchronization time
+      variables:
+        last_update: string
+      then:
+        - lambda: |-
+            id(last_extension_seen) = millis();
+            id(extension_last_update).publish_state(last_update.substr(0, 48));
+
+    - action: extension_heartbeat
+      description: Keep the integration connectivity diagnostic current
+      then:
+        - lambda: id(last_extension_seen) = millis();
 
     - action: action_result
       description: Report success or failure of a selected menu action
@@ -213,6 +234,12 @@ globals:
   - id: pending_item
     type: std::string
     initial_value: '""'
+  - id: sleep_timeout_sec
+    type: int
+    initial_value: '30'
+  - id: last_extension_seen
+    type: uint32_t
+    initial_value: '0'
   - id: led_busy
     type: bool
     initial_value: 'false'
@@ -227,6 +254,15 @@ globals:
     initial_value: '0'
 
 sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+    entity_category: diagnostic
+  - platform: uptime
+    name: "Uptime"
+    type: seconds
+    update_interval: 30s
+    entity_category: diagnostic
   - platform: rotary_encoder
     id: menu_encoder
     pin_a:
@@ -251,6 +287,14 @@ sensor:
           direction: -1
 
 binary_sensor:
+  - platform: template
+    id: extension_connected
+    name: "Extension Connected"
+    entity_category: diagnostic
+    device_class: connectivity
+    lambda: |-
+      return id(last_extension_seen) != 0 &&
+             (uint32_t)(millis() - id(last_extension_seen)) < 90000;
   - platform: gpio
     id: menu_button
     pin:
@@ -272,6 +316,56 @@ binary_sensor:
             - script.execute: back_menu
           else:
             - script.execute: select_menu
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+  - platform: template
+    id: extension_last_update
+    name: "Extension Last Update"
+    entity_category: diagnostic
+    icon: mdi:clock-check-outline
+
+number:
+  - platform: template
+    id: sleep_timeout_number
+    name: "Sleep Timeout"
+    entity_category: config
+    icon: mdi:sleep
+    unit_of_measurement: s
+    min_value: 0
+    max_value: 3600
+    step: 1
+    optimistic: true
+    initial_value: 30
+    restore_value: false
+    set_action:
+      - lambda: |-
+          id(sleep_timeout_sec) = static_cast<int>(x);
+          if (id(sleep_timeout_sec) == 0 && id(screen_sleep)) {
+            id(screen_sleep) = false;
+            id(last_input) = millis();
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+          }
+      - homeassistant.event:
+          event: esphome.ha_menu_sleep_changed
+          data:
+            device: ha-menu-c3
+          data_template:
+            seconds: "{{ sleep_time }}"
+          variables:
+            sleep_time: !lambda 'return std::to_string(static_cast<int>(x));'
+
+button:
+  - platform: template
+    name: "Identify"
+    entity_category: config
+    icon: mdi:lightbulb-flash
+    on_press:
+      - script.execute: identify_led
 
 light:
   - platform: esp32_rmt_led_strip
@@ -336,17 +430,18 @@ display:
           it.print(x + 3, 27, id(menu_font), "Aucune entree");
           return;
         }
-        const int start = (selection / 4) * 4;
+        const int visible = 4;
+        const int start = std::clamp(selection - 1, 0, std::max(0, total - visible));
         auto draw_row = [&](int position, const std::string &label, bool submenu) {
-          if (position < start || position >= start + 4) return;
+          if (position < start || position >= start + visible) return;
           const int y = 16 + (position - start) * 12;
           const bool selected = (position == selection);
           const auto ink = selected ? COLOR_OFF : COLOR_ON;
-          if (selected) it.filled_rectangle(x, y, 128, 12, COLOR_ON);
+          if (selected) it.filled_rectangle(x, y, total > visible ? 124 : 128, 12, COLOR_ON);
           std::string text = label;
-          if (text.size() > 19) text = text.substr(0, 19);
+          if (text.size() > 18) text = text.substr(0, 18);
           it.print(x + 3, y, id(menu_font), ink, text.c_str());
-          if (submenu) it.print(x + 119, y, id(menu_font), ink, ">");
+          if (submenu) it.print(x + 116, y, id(menu_font), ink, ">");
         };
 
         int position = 0;
@@ -361,6 +456,14 @@ display:
             }
           }
           draw_row(position++, id(menu_labels)[i], submenu);
+        }
+        if (total > visible) {
+          // Fixed track and proportional scroll thumb on the right edge.
+          const int track_height = 48;
+          const int thumb_height = std::max(6, track_height * visible / total);
+          const int thumb_y = 16 + (track_height - thumb_height) * start / (total - visible);
+          it.vertical_line(x + 127, 16, track_height, COLOR_ON);
+          it.filled_rectangle(x + 125, thumb_y, 2, thumb_height, COLOR_ON);
         }
       };
 
@@ -388,8 +491,13 @@ interval:
   - interval: 1s
     then:
       - lambda: |-
-          if (!id(screen_sleep) && (uint32_t)(millis() - id(last_input)) > 30000) {
+          const int timeout = id(sleep_timeout_sec);
+          if (!id(screen_sleep) && !id(led_busy) && id(pending_item).empty() &&
+              timeout > 0 &&
+              (uint32_t)(millis() - id(last_input)) >= (uint32_t)timeout * 1000U) {
             id(screen_sleep) = true;
+            id(oled).turn_off();
+            id(restore_led).execute();
           }
 
 script:
@@ -406,7 +514,11 @@ script:
           bool was_asleep = id(screen_sleep);
           id(screen_sleep) = false;
           id(last_input) = now;
-          if (was_asleep) return;
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
           int children = id(current_page).empty() ? 0 : 1;
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] == id(current_page)) children++;
@@ -424,7 +536,12 @@ script:
           bool was_asleep = id(screen_sleep);
           id(screen_sleep) = false;
           id(last_input) = millis();
-          if (was_asleep || id(current_page).empty()) return;
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
+          if (id(current_page).empty()) return;
           id(previous_page) = id(current_page);
           id(previous_cursor) = id(cursor);
           std::string parent = "";
@@ -457,7 +574,11 @@ script:
           bool was_asleep = id(screen_sleep);
           id(screen_sleep) = false;
           id(last_input) = millis();
-          if (was_asleep) return;
+          if (was_asleep) {
+            id(oled).turn_on();
+            if (!id(led_busy)) id(restore_led).execute();
+            return;
+          }
 
           if (!id(current_page).empty() && id(cursor) == 0) {
             id(back_menu).execute();
@@ -642,7 +763,7 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return id(base_red) == 0 && id(base_green) == 0 && id(base_blue) == 0;'
+            lambda: 'return id(screen_sleep) || (id(base_red) == 0 && id(base_green) == 0 && id(base_blue) == 0);'
           then:
             - light.turn_off:
                 id: status_rgb

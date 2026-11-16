@@ -50,6 +50,23 @@ class MenuValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(MenuValidationError, "8 niveaux"):
             validate_config({"items":items})
 
+    def test_default_sleep_setting(self):
+        cfg = validate_config({"items": []})
+        self.assertEqual(cfg["settings"]["sleep_seconds"], 30)
+
+    def test_disable_sleep(self):
+        cfg = validate_config({"items": [], "settings": {"sleep_seconds": 0}})
+        self.assertEqual(cfg["settings"]["sleep_seconds"], 0)
+
+    def test_max_sleep(self):
+        cfg = validate_config({"items": [], "settings": {"sleep_seconds": 3600}})
+        self.assertEqual(cfg["settings"]["sleep_seconds"], 3600)
+
+    def test_bad_sleep_values(self):
+        for value in [-1, 3601, 3.5, True, "30", None]:
+            with self.subTest(value=value), self.assertRaisesRegex(MenuValidationError, "Veille"):
+                validate_config({"items": [], "settings": {"sleep_seconds": value}})
+
     def test_json_payload(self):
         one=item("x")
         one["data"]={"brightness_pct":50}

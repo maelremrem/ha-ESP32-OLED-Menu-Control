@@ -112,7 +112,15 @@ def validate_config(config: dict) -> dict:
     if not isinstance(active_state, str) or not 0 < len(active_state) <= 80:
         raise MenuValidationError("État actif LED invalide")
 
+    settings = config.get("settings", {})
+    if not isinstance(settings, dict):
+        raise MenuValidationError("Paramètres invalides")
+    sleep_seconds = settings.get("sleep_seconds", 30)
+    if type(sleep_seconds) is not int or not 0 <= sleep_seconds <= 3600:
+        raise MenuValidationError("Veille : entier entre 0 et 3600 secondes")
+
     return {
+        "settings": {"sleep_seconds": sleep_seconds},
         "items": sorted_items,
         "led": {
             "entity_id": status_entity.strip(),

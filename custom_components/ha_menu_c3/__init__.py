@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import voluptuous as vol
@@ -16,6 +17,7 @@ from homeassistant.core import (
     callback,
 )
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     CONF_DEVICE_NAME,
@@ -49,6 +51,8 @@ class MenuManager:
         self.sync_lock = asyncio.Lock()
         self.last_sync = "not_synced"
         self.last_error = ""
+        self.last_sync_at = None
+        self.heartbeat_ok = False
 
     async def load(self) -> None:
         stored = await self.store.async_load()
@@ -65,12 +69,37 @@ class MenuManager:
         await self.sync()
         return self.status()
 
+    def diagnostics(self) -> dict:
+        """Read ESPHome diagnostics without assuming the entity has its default name."""
+        suffixes = {
+            "wifi": "wifi_signal",
+            "uptime": "uptime",
+            "ip": "ip_address",
+            "extension_connected": "extension_connected",
+            "extension_update": "extension_last_update",
+        }
+        found = {key: None for key in suffixes}
+        # ESPHome's normal entity IDs start with the node's friendly-name slug.
+        # Renamed IDs remain available in the native ESPHome device page.
+        for state in self.hass.states.async_all():
+            object_id = state.entity_id.split(".", 1)[-1]
+            if not object_id.startswith(self.device_slug + "_"):
+                continue
+            for key, suffix in suffixes.items():
+                if object_id == f"{self.device_slug}_{suffix}" or object_id.endswith("_" + suffix):
+                    found[key] = {"entity_id": state.entity_id, "state": state.state,
+                                  "unit": state.attributes.get("unit_of_measurement", "")}
+        return found
+
     def status(self) -> dict:
         return {
             "device": self.device_name,
             "config": self.config,
             "sync": self.last_sync,
             "error": self.last_error,
+            "last_sync_at": self.last_sync_at,
+            "extension_online": self.heartbeat_ok,
+            "diagnostics": self.diagnostics(),
         }
 
     async def _call_esp(self, action: str, data: dict) -> None:
@@ -78,7 +107,7 @@ class MenuManager:
         if not self.hass.services.has_service("esphome", name):
             raise RuntimeError(
                 f"Action esphome.{name} introuvable. Vérifie que le C3 "
-                "est connecté et utilise le firmware V4."
+                "est connecté et utilise le firmware V5."
             )
         await self.hass.services.async_call("esphome", name, data, blocking=True)
 
@@ -97,14 +126,54 @@ class MenuManager:
                         "label": item["label"],
                     })
                 await self._call_esp("set_menu_count", {"count": len(items)})
+                await self._call_esp("set_sleep_timeout", {
+                    "seconds": self.config["settings"]["sleep_seconds"]
+                })
                 await self.sync_led()
+                stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+                await self._call_esp("set_extension_status", {"last_update": stamp})
             except Exception as err:  # device disconnected or service call failed
                 self.last_sync = "error"
+                self.heartbeat_ok = False
                 self.last_error = str(err)
                 _LOGGER.warning("Cannot sync HA Menu C3: %s", err)
             else:
                 self.last_sync = "ok"
+                self.heartbeat_ok = True
+                self.last_sync_at = stamp
                 _LOGGER.info("Synced %d items to %s", len(self.config["items"]), self.device_name)
+
+    async def heartbeat(self) -> None:
+        """Keep extension connectivity independent from ESPHome API log clients."""
+        try:
+            await self._call_esp("extension_heartbeat", {})
+            self.heartbeat_ok = True
+        except Exception as err:
+            self.heartbeat_ok = False
+            _LOGGER.debug("HA Menu C3 heartbeat failed: %s", err)
+
+    async def save_sleep_from_device(self, seconds: int) -> None:
+        """Keep the panel in sync if the native ESPHome number was changed."""
+        if self.config["settings"]["sleep_seconds"] == seconds:
+            return
+        updated = dict(self.config)
+        updated["settings"] = {"sleep_seconds": seconds}
+        try:
+            self.config = validate_config(updated)
+        except MenuValidationError:
+            _LOGGER.warning("Ignoring invalid sleep timeout from device: %s", seconds)
+            return
+        await self.store.async_save(self.config)
+
+    @callback
+    def on_sleep_changed(self, event) -> None:
+        if event.data.get("device") != self.device_name:
+            return
+        try:
+            seconds = int(event.data.get("seconds", ""))
+        except (ValueError, TypeError):
+            return
+        self.hass.async_create_task(self.save_sleep_from_device(seconds))
 
     async def sync_led(self) -> None:
         led = self.config["led"]
@@ -263,13 +332,17 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         frontend_url_path=PANEL_URL,
         sidebar_title="HA Menu C3",
         sidebar_icon="mdi:gesture-tap-button",
-        module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=1",
+        module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=2",
         require_admin=True,
     )
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_READY, manager.on_ready))
     entry.async_on_unload(hass.bus.async_listen(EVENT_SELECTED, manager.on_selected))
     entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, manager.on_state))
+    entry.async_on_unload(hass.bus.async_listen(
+        "esphome.ha_menu_sleep_changed", manager.on_sleep_changed))
+    entry.async_on_unload(async_track_time_interval(
+        hass, lambda now: hass.async_create_task(manager.heartbeat()), timedelta(seconds=30)))
     if hass.is_running:
         hass.async_create_task(manager.sync())
     else:
