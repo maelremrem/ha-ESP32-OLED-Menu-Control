@@ -35,6 +35,8 @@ def validate_config(config: dict) -> dict:
         data = raw.get("data", {})
         if not isinstance(ident, str) or not ID_PATTERN.fullmatch(ident):
             raise MenuValidationError("Identifiant invalide (lettres, chiffres, _ et -)")
+        if ident == "__about":
+            raise MenuValidationError("Identifiant reserve : __about")
         if ident in seen:
             raise MenuValidationError(f"Identifiant dupliqué : {ident}")
         seen.add(ident)

@@ -30,6 +30,14 @@ const STYLES = `
   .tree-row { display:flex; align-items:center; min-height:43px; border:1px solid transparent; border-radius:9px; cursor:pointer; gap:8px; padding:8px 9px; }
   .tree-row:hover { background:var(--secondary-background-color); }
   .tree-row.active { background:color-mix(in srgb,var(--primary-color) 12%,transparent); border-color:color-mix(in srgb,var(--primary-color) 40%,transparent); }
+  .tree-handle { cursor:grab; font-size:17px; color:var(--secondary-text-color); padding:3px; user-select:none; }
+  .tree-row.dragging { opacity:.4; }
+  .tree-row.drop-before { border-top:3px solid var(--primary-color); }
+  .tree-row.drop-after { border-bottom:3px solid var(--primary-color); }
+  .tree-row.drop-inside { border:2px dashed var(--primary-color); background:color-mix(in srgb,var(--primary-color) 14%,transparent); }
+  .tree-root-drop { border:1px dashed var(--divider-color); border-radius:9px; text-align:center; padding:10px; color:var(--secondary-text-color); margin-top:8px; font-size:12px; }
+  .tree-root-drop.drop-inside { border-color:var(--primary-color); background:var(--secondary-background-color); }
+  .tree-system { display:flex; border:1px solid var(--divider-color); border-radius:9px; padding:9px 12px; margin-top:7px; color:var(--secondary-text-color); align-items:center; gap:10px; font-size:12px; }
   .tree-item { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tree-item small { display:block; font-size:11px; color:var(--secondary-text-color); overflow:hidden; text-overflow:ellipsis; }
   .tree-glyph { width:22px; text-align:center; opacity:.7; }
@@ -84,6 +92,12 @@ class HAMenuC3Panel extends HTMLElement {
     this._hass = null;
     this.editJson = "{}";
     this.editJsonError = "";
+    this.dragId = null;
+    this.dropTarget = null;
+    this.shadowRoot.addEventListener("dragstart", (event) => this.onDragStart(event));
+    this.shadowRoot.addEventListener("dragover", (event) => this.onDragOver(event));
+    this.shadowRoot.addEventListener("drop", (event) => this.onDrop(event));
+    this.shadowRoot.addEventListener("dragend", () => this.clearDrag());
   }
 
   set hass(value) {
@@ -159,7 +173,7 @@ class HAMenuC3Panel extends HTMLElement {
             <button class="btn" data-op="add-root" ${count >= 32 ? "disabled" : ""}>+ Entrée</button>
             <button class="btn" data-op="add-folder" ${count >= 32 ? "disabled" : ""}>+ Sous-menu</button>
           </div>
-          <p class="hint meta">Sélectionne une entrée pour l'éditer. Les flèches changent son ordre. Les sous-menus affichent automatiquement &lt; Retour.</p>
+          <p class="hint meta">Glisse les lignes pour les réordonner. Dépose en haut/bas pour changer l'ordre, au centre d'un sous-menu pour y déplacer l'entrée. Sur mobile, conserve les flèches et le champ « Menu parent ». L'entrée « À propos » est toujours en dernier.</p>
         </section>
         <div>
           <section class="panel"><div class="panel-head"><h2>Éditeur d'entrée</h2></div><div id="editor"></div></section>
@@ -197,22 +211,24 @@ class HAMenuC3Panel extends HTMLElement {
     const host = this.shadowRoot.querySelector("#tree");
     if (!host) return;
     if (!this.items.length) {
-      host.innerHTML = `<div class="empty">Menu vide. Ajoute une première entrée.</div>`;
+      host.innerHTML = `<div class="empty">Menu vide. Ajoute une première entrée.</div><div class="tree-system">ⓘ À propos <small>(système, dernier)</small></div>`;
       return;
     }
     const rows = [];
     const walk = (parent, level) => {
       for (const item of this.items.filter((i) => i.parent === parent)) {
         const folder = this.isFolder(item);
-        rows.push(`<div role="button" tabindex="0" data-select="${esc(item.id)}" class="tree-row ${item.id === this.selectedId ? "active" : ""}" style="padding-left:${9 + level * 16}px">
-          <span class="tree-glyph">${folder ? "▸" : "•"}</span>
+        rows.push(`<div role="button" tabindex="0" draggable="true" data-select="${esc(item.id)}" class="tree-row ${item.id === this.selectedId ? "active" : ""}" style="padding-left:${9 + level * 16}px">
+          <span class="tree-handle" aria-label="Déplacer">⠿</span><span class="tree-glyph">${folder ? "▸" : "•"}</span>
           <span class="tree-item">${esc(item.label)}<small>${folder ? "Sous-menu" : esc(item.service || "Action non configurée")}</small></span>
         </div>`);
         walk(item.id, level+1);
       }
     };
     walk("", 0);
-    host.innerHTML = `<div class="tree">${rows.join("")}</div>`;
+    host.innerHTML = `<div class="tree">${rows.join("")}</div>
+      <div class="tree-root-drop" data-drop-root="true">↳ Déposer ici pour déplacer à la racine (en dernier)</div>
+      <div class="tree-system">ⓘ À propos <small>(système, dernier)</small></div>`;
   }
 
   renderEditor() {
@@ -387,6 +403,101 @@ class HAMenuC3Panel extends HTMLElement {
     };
     this.status.config.items=walk("");
     this.renderTree();
+  }
+
+  clearDrag() {
+    this.dragId = null;
+    this.dropTarget = null;
+    this.shadowRoot.querySelectorAll(".drop-before,.drop-after,.drop-inside,.dragging")
+      .forEach(el => el.classList.remove("drop-before", "drop-after", "drop-inside", "dragging"));
+  }
+
+  onDragStart(event) {
+    const row = event.target.closest?.("[data-select]");
+    if (!row || !this.status || !this.commitEditor()) {
+      event.preventDefault();
+      return;
+    }
+    this.dragId = row.dataset.select;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", this.dragId);
+    row.classList.add("dragging");
+  }
+
+  onDragOver(event) {
+    if (!this.dragId) return;
+    const row = event.target.closest?.("[data-select]");
+    const root = event.target.closest?.("[data-drop-root]");
+    if (!row && !root) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    this.shadowRoot.querySelectorAll(".drop-before,.drop-after,.drop-inside")
+      .forEach(el => el.classList.remove("drop-before", "drop-after", "drop-inside"));
+    let placement = "root";
+    if (row) {
+      const rect = row.getBoundingClientRect();
+      const ratio = (event.clientY - rect.top) / rect.height;
+      placement = ratio < 0.27 ? "before" : ratio > 0.73 ? "after" : "inside";
+    }
+    const target = row || root;
+    target.classList.add(placement === "root" ? "drop-inside" : `drop-${placement}`);
+    this.dropTarget = {id: row?.dataset.select || "", placement};
+  }
+
+  onDrop(event) {
+    if (!this.dragId) return;
+    event.preventDefault();
+    const src = this.dragId;
+    const drop = this.dropTarget;
+    this.clearDrag();
+    if (!drop) return;
+    this.moveTreeItem(src, drop.id, drop.placement);
+  }
+
+  moveTreeItem(sourceId, targetId, placement) {
+    const moved = this.items.find(i => i.id === sourceId);
+    const target = this.items.find(i => i.id === targetId);
+    if (!moved || (placement !== "root" && !target)) return false;
+    if (targetId === sourceId || (targetId && this.isDescendant(targetId, sourceId))) {
+      this.show("Déplacement refusé : un menu ne peut pas être placé dans un de ses descendants.", "error");
+      return false;
+    }
+    if (placement === "inside" && target.service) {
+      this.show("Cette entrée possède une action. Retire son action avant d'y déposer un sous-menu.", "error");
+      return false;
+    }
+    const newParent = placement === "root" ? "" : placement === "inside" ? targetId : target.parent;
+    if (newParent === sourceId || (newParent && this.isDescendant(newParent, sourceId))) {
+      this.show("Sous-menu circulaire interdit.", "error");
+      return false;
+    }
+    const oldParent = moved.parent;
+    moved.parent = newParent;
+    const siblings = this.items.filter(i => i.parent === newParent && i.id !== sourceId).map(i => i.id);
+    let index = siblings.length;
+    if (placement === "before") index = siblings.indexOf(targetId);
+    if (placement === "after") index = siblings.indexOf(targetId) + 1;
+    if (index < 0) index = siblings.length;
+    siblings.splice(index, 0, sourceId);
+    const siblingOrder = new Map(siblings.map((id, pos) => [id, pos]));
+    const current = this.items;
+    const result = [];
+    const visit = (parent) => {
+      const children = current.filter(i => i.parent === parent);
+      if (parent === newParent) children.sort((a,b) => siblingOrder.get(a.id) - siblingOrder.get(b.id));
+      for (const item of children) { result.push(item); visit(item.id); }
+    };
+    visit("");
+    if (result.length !== current.length) {
+      moved.parent = oldParent;
+      this.show("Arborescence invalide, déplacement annulé.", "error");
+      return false;
+    }
+    this.status.config.items = result;
+    this.selectedId = sourceId;
+    this.renderTree(); this.renderEditor();
+    this.show("Arborescence modifiée. Clique sur Enregistrer pour synchroniser le C3.");
+    return true;
   }
 
   deleteSelected() {

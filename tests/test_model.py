@@ -74,3 +74,8 @@ class MenuValidationTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+class ReservedItemTests(unittest.TestCase):
+    def test_about_id_is_reserved(self):
+        with self.assertRaisesRegex(MenuValidationError, "reserve"):
+            validate_config({"items": [item("__about")]})

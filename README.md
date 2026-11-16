@@ -122,3 +122,22 @@ hacs.json                        # HACS metadata
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## V0.3.0 — tree editor and OLED feedback
+
+### Home Assistant editor
+
+- Drag menu entries using the **⠿ handle** to reorder them. Drop at the top/bottom edge of a row to insert before/after, or at its center to move inside an existing submenu. A dedicated drop area moves an entry back to the root.
+- Dropping on an action is blocked: clear its action before turning it into a submenu. Circular nesting is rejected. The up/down buttons and parent selector remain available on mobile.
+- Save to persist changes and synchronize with the ESP32. Drag-and-drop edits are local until saved.
+- Connected entity states are sent on sync and whenever their state changes (`ON`, `OFF`, numeric sensor values, etc.).
+
+### OLED firmware (V0.3.0)
+
+- The header contains a Wi-Fi signal icon and an HA connection icon; both reflect the actual connectivity status.
+- Configured entities display their live status on the right of each menu row (for example `ON`, `OFF`, or a sensor reading). Home Assistant supplies the state updates; the OLED is not a network client.
+- Running an action shows a progress screen. Once Home Assistant accepts the service call, a large check mark and the message `Commande envoyee` appear. Failed calls show a cross and an error explanation; the screen disappears after **10 seconds**, or immediately on the first encoder rotation or button action. That first input only dismisses the message.
+- `A Propos` is always the last item of the root menu and cannot be deleted or moved. It shows firmware version, Wi-Fi status, SSID, IP address, RSSI, HA extension status, last sync and uptime.
+- The firmware requires the updated V0.3.0 integration because the `action_result` ESPHome action now includes `message` and the integration calls `set_menu_status` to update entity states. **Update HACS first, then flash the firmware immediately** to avoid an incompatible transition. The HACS update alone does not flash the device.
+
+Connection secrets in the ESPHome example remain `api_encryption_key` and `ota_password`.
