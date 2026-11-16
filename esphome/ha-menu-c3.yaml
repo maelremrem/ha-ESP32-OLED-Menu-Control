@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.4"
+  fw_version: "0.5.5"
 
 esphome:
   name: ${device_name}
@@ -793,18 +793,28 @@ display:
         const int visible = 3;
         const int start = std::clamp(selection - 1, 0, std::max(0, total - visible));
         auto draw_row = [&](int position, const std::string &label,
-                            const std::string &state, bool submenu) {
+                            const std::string &state, bool submenu, bool controls) {
           if (position < start || position >= start + visible) return;
           const int y = 16 + (position - start) * 12;
           const bool selected = (position == selection);
           const auto ink = selected ? COLOR_OFF : COLOR_ON;
           if (selected) it.filled_rectangle(x, y, total > visible ? 124 : 128, 12, COLOR_ON);
+          const bool has_status = !state.empty() || controls;
           std::string name = label;
-          if (name.size() > (state.empty() ? 17U : 12U))
-            name = name.substr(0, state.empty() ? 17 : 12);
+          const size_t name_limit = has_status ? 11U : 17U;
+          if (name.size() > name_limit) name = name.substr(0, name_limit);
           it.print(x + 3, y, id(menu_font), ink, name.c_str());
-          if (submenu) it.print(x + 118, y, id(menu_font), ink, ">");
-          else if (!state.empty()) {
+          if (submenu) {
+            it.print(x + 118, y, id(menu_font), ink, ">");
+          } else if (controls) {
+            // Show the state and a right chevron when long-press options exist.
+            if (!state.empty()) {
+              std::string short_state = state.substr(0, 5);
+              it.print(x + 109, y, id(menu_font), ink, TextAlign::TOP_RIGHT,
+                       short_state.c_str());
+            }
+            it.print(x + 117, y, id(menu_font), ink, ">");
+          } else if (!state.empty()) {
             std::string short_state = state.substr(0, 6);
             it.print(x + 121, y, id(menu_font), ink, TextAlign::TOP_RIGHT,
                      short_state.c_str());
@@ -821,19 +831,20 @@ display:
             std::string("Sync: ") + id(extension_last_update).state.substr(0, 12),
             std::string("Uptime: ") + std::to_string(millis() / 3600000UL) + "h " + std::to_string((millis() / 60000UL) % 60) + "m"
           };
-          for (int i = 0; i < 9; i++) draw_row(i, info[i], "", false);
+          for (int i = 0; i < 9; i++) draw_row(i, info[i], "", false, false);
         } else {
           int pos = 0;
-          if (has_back) draw_row(pos++, "< Retour", "", false);
+          if (has_back) draw_row(pos++, "< Retour", "", false, false);
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] != page) continue;
             bool submenu = false;
             for (int j = 0; j < id(menu_length); j++) {
               if (id(menu_parents)[j] == id(menu_ids)[i]) { submenu = true; break; }
             }
-            draw_row(pos++, id(menu_labels)[i], submenu ? "" : id(menu_states)[i], submenu);
+            draw_row(pos++, id(menu_labels)[i], submenu ? "" : id(menu_states)[i], submenu,
+                      !submenu && id(menu_control_flags)[i] != 0);
           }
-          if (page.empty()) draw_row(pos, "A Propos", "", true);
+          if (page.empty()) draw_row(pos, "A Propos", "", true, false);
         }
         if (total > visible) {
           const int track = 36;
