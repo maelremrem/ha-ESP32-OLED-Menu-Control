@@ -251,6 +251,12 @@ class MenuManager:
                     "font_size": settings["font_size"],
                     "offline_cache": settings["offline_cache"],
                 })
+                shortcuts = self.config.get("shortcuts", {})
+                await self._call_esp("set_shortcut_config", {
+                    "double": bool(shortcuts.get("double")),
+                    "triple": bool(shortcuts.get("triple")),
+                    "hold": bool(shortcuts.get("hold")),
+                })
                 await self.sync_led()
                 stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
                 await self._call_esp("set_extension_status", {"last_update": stamp})
