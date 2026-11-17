@@ -809,16 +809,27 @@ display:
           const bool active = row == id(control_cursor);
           const auto color = active ? COLOR_OFF : COLOR_ON;
           if (active) it.filled_rectangle(0, y, 125, 12, COLOR_ON);
-          const char *label = row == 0 ? "< Retour" : "";
+          const char *label = row == 0 ? (id(ui_language) == "en" ? "< Back" : "< Retour") : "";
           std::string value = "";
           switch (field) {
-            case 1: label = "Intensite"; value = std::to_string((id(ctrl_brightness) * 100 + 127) / 255) + "%"; break;
-            case 2: label = "Blanc"; value = std::to_string(id(ctrl_kelvin)) + "K"; break;
-            case 4: label = "Teinte"; value = std::to_string(id(ctrl_hue)); break;
-            case 8: label = "Consigne"; value = std::to_string(id(ctrl_temp) / 10) + "." + std::to_string(std::abs(id(ctrl_temp) % 10)) + id(ctrl_temp_unit); break;
+            case 1: label = id(ui_language) == "en" ? "Brightness" : "Intensite"; value = std::to_string((id(ctrl_brightness) * 100 + 127) / 255) + "%"; break;
+            case 2: label = id(ui_language) == "en" ? "White" : "Blanc"; value = std::to_string(id(ctrl_kelvin)) + "K"; break;
+            case 4: label = id(ui_language) == "en" ? "Hue" : "Teinte"; value = std::to_string(id(ctrl_hue)); break;
+            case 8: label = id(ui_language) == "en" ? "Target" : "Consigne"; value = std::to_string(id(ctrl_temp) / 10) + "." + std::to_string(std::abs(id(ctrl_temp) % 10)) + id(ctrl_temp_unit); break;
             case 16: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
-            case 32: label = "Humidite"; value = std::to_string(id(ctrl_humidity)) + "%"; break;
+            case 32: label = id(ui_language) == "en" ? "Humidity" : "Humidite"; value = std::to_string(id(ctrl_humidity)) + "%"; break;
             case 64: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
+            case 128: label = id(ui_language) == "en" ? "Position" : "Position"; value = std::to_string(id(ctrl_cover_position)) + "%"; break;
+            case 256: label = "Ouvrir"; if (id(ui_language) == "en") label = "Open"; break;
+            case 512: label = "Stop"; break;
+            case 1024: label = id(ui_language) == "en" ? "Close" : "Fermer"; break;
+            case 2048: label = id(ui_language) == "en" ? "Speed" : "Vitesse"; value = std::to_string(id(ctrl_fan_percentage)) + "%"; break;
+            case 4096: label = id(ui_language) == "en" ? "Oscillation" : "Oscillation"; value = id(ctrl_fan_oscillating) ? "ON" : "OFF"; break;
+            case 8192: label = id(ui_language) == "en" ? "Direction" : "Direction"; value = id(ctrl_fan_direction) == "reverse" ? "REV" : "FWD"; break;
+            case 16384: label = "Volume"; value = std::to_string(id(ctrl_media_volume)) + "%"; break;
+            case 32768: label = id(ui_language) == "en" ? "Play/Pause" : "Lire/Pause"; break;
+            case 65536: label = id(ui_language) == "en" ? "Next" : "Suivant"; break;
+            case 131072: label = id(ui_language) == "en" ? "Previous" : "Precedent"; break;
           }
           if (value.size() > 9) value = value.substr(0, 9);
           it.print(3, y, id(title_font), color, label);
@@ -834,7 +845,7 @@ display:
 
       auto render_page = [&](const std::string &page, int x, int selection) {
         const bool about = page == "__about";
-        std::string title = about ? "A PROPOS" : "HA MENU";
+        std::string title = about ? (id(ui_language) == "en" ? "ABOUT" : "A PROPOS") : "HA MENU";
         for (int i = 0; !about && i < id(menu_length); i++) {
           if (!page.empty() && id(menu_ids)[i] == page) {
             title = id(menu_labels)[i];
@@ -900,7 +911,7 @@ display:
         };
         if (about) {
           std::string info[9] = {
-            "< Retour", "FW: ${fw_version}",
+            (id(ui_language) == "en" ? "< Back" : "< Retour"), "FW: ${fw_version}",
             std::string("WiFi: ") + (id(wifi_node).is_connected() ? "OK" : "OFF"),
             std::string("SSID: ") + id(device_ssid).state,
             std::string("IP: ") + id(device_ip).state,
@@ -912,7 +923,7 @@ display:
           for (int i = 0; i < 9; i++) draw_row(i, info[i], "", false, false);
         } else {
           int pos = 0;
-          if (has_back) draw_row(pos++, "< Retour", "", false, false);
+          if (has_back) draw_row(pos++, id(ui_language) == "en" ? "< Back" : "< Retour", "", false, false);
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] != page) continue;
             bool submenu = false;
@@ -922,7 +933,7 @@ display:
             draw_row(pos++, id(menu_labels)[i], submenu ? "" : id(menu_states)[i], submenu,
                       !submenu && id(menu_control_flags)[i] != 0);
           }
-          if (page.empty()) draw_row(pos, "A Propos", "", true, false);
+          if (page.empty()) draw_row(pos, id(ui_language) == "en" ? "About" : "A Propos", "", true, false);
         }
         if (total > visible) {
           const int track = 48;
