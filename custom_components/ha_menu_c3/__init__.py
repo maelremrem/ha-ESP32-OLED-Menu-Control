@@ -254,9 +254,9 @@ class MenuManager:
                 })
                 shortcuts = self.config.get("shortcuts", {})
                 await self._call_esp("set_shortcut_config", {
-                    "double": bool(shortcuts.get("double")),
-                    "triple": bool(shortcuts.get("triple")),
-                    "hold": bool(shortcuts.get("hold")),
+                    "double_enabled": bool(shortcuts.get("double")),
+                    "triple_enabled": bool(shortcuts.get("triple")),
+                    "hold_enabled": bool(shortcuts.get("hold")),
                 })
                 await self.sync_led()
                 stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
