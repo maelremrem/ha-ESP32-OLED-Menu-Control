@@ -1175,6 +1175,11 @@ script:
             id(feedback_suppressed) = true;
             return;
           }
+          if (id(info_slot) >= 0) return;
+          if (id(confirm_slot) >= 0) {
+            id(confirm_cursor) = 1 - id(confirm_cursor);
+            return;
+          }
           if (id(control_loading)) return;
           if (id(control_open)) {
             if (!id(control_editing)) {
@@ -1314,6 +1319,14 @@ script:
           if (id(feedback_mode) != 0) {
             id(feedback_mode) = 0;
             id(feedback_suppressed) = true;
+            return;
+          }
+          if (id(info_slot) >= 0) { id(info_slot) = -1; return; }
+          if (id(confirm_slot) >= 0) {
+            const int slot = id(confirm_slot);
+            const bool approved = id(confirm_cursor) == 1;
+            id(confirm_slot) = -1;
+            if (approved) id(execute_item).execute(slot, true);
             return;
           }
           if (id(control_loading)) return;
@@ -1480,7 +1493,7 @@ script:
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] != id(current_page)) continue;
             if (position++ != id(cursor)) continue;
-            if (id(menu_control_flags)[i] != 0) {
+            if (id(menu_synced) && id(menu_control_flags)[i] != 0) {
               id(control_slot) = i;
               id(control_loading) = true;
               id(control_started) = now;
