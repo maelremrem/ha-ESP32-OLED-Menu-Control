@@ -86,6 +86,8 @@ def validate_config(config: dict) -> dict:
         ):
             raise MenuValidationError(f"Commandes avancees invalides : {ident}")
         active_controls = {key: True for key, value in controls.items() if value}
+        if kind != "action":
+            active_controls = {}
         if active_controls:
             domain = entity.split(".", 1)[0]
             if any(CONTROL_KEYS[key] != domain for key in active_controls):
@@ -169,6 +171,9 @@ def validate_config(config: dict) -> dict:
                          "animations": True, "offline_cache": True}.items():
         if type(settings.get(key, default)) is not bool:
             raise MenuValidationError(f"Parametre {key} invalide")
+    animation_ms = settings.get("animation_ms", 220)
+    if type(animation_ms) is not int or not 100 <= animation_ms <= 500:
+        raise MenuValidationError("Vitesse animation invalide")
     contrast = settings.get("oled_contrast", 80)
     if type(contrast) is not int or not 1 <= contrast <= 100:
         raise MenuValidationError("Contraste OLED invalide")
@@ -206,6 +211,7 @@ def validate_config(config: dict) -> dict:
             "direct_edit": settings.get("direct_edit", False),
             "encoder_inverted": settings.get("encoder_inverted", False),
             "animations": settings.get("animations", True),
+            "animation_ms": animation_ms,
             "offline_cache": settings.get("offline_cache", True),
             "oled_contrast": contrast,
         },
