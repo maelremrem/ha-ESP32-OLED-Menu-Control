@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.7"
+  fw_version: "0.6.0"
 
 esphome:
   name: ${device_name}
@@ -13,8 +13,50 @@ esphome:
       - lambda: |-
           id(menu_length) = 0;
           id(menu_synced) = false;
+          id(menu_cached) = false;
           id(sync_wait_started) = millis();
           id(last_input) = millis();
+          // Restore the last confirmed menu, never an incomplete transfer.
+          if (!id(cached_menu_blob).empty()) {
+            const std::string blob = id(cached_menu_blob);
+            size_t at = 0;
+            auto take = [&](std::string &out) -> bool {
+              const size_t colon = blob.find(':', at);
+              if (colon == std::string::npos || colon - at > 5 || colon == at) return false;
+              size_t length = 0;
+              for (size_t k = at; k < colon; ++k) {
+                if (blob[k] < '0' || blob[k] > '9') return false;
+                length = length * 10 + (blob[k] - '0');
+              }
+              at = colon + 1;
+              if (length > 3800 || at + length > blob.size()) return false;
+              out = blob.substr(at, length);
+              at += length;
+              return true;
+            };
+            std::string token;
+            bool ok = take(token) && token == "HA6" && take(token);
+            int count = ok ? std::atoi(token.c_str()) : 0;
+            if (count < 1 || count > 32) ok = false;
+            for (int i = 0; ok && i < count; ++i) {
+              std::string id_value, label, parent, state, kind, command, flags, confirm;
+              ok = take(id_value) && take(label) && take(parent) && take(state) &&
+                   take(kind) && take(command) && take(flags) && take(confirm);
+              if (!ok || id_value.empty() || label.empty()) { ok = false; break; }
+              id(menu_ids)[i] = id_value;
+              id(menu_labels)[i] = label;
+              id(menu_parents)[i] = parent;
+              id(menu_states)[i] = state;
+              id(menu_kinds)[i] = kind;
+              id(menu_local_commands)[i] = command;
+              id(menu_control_flags)[i] = std::clamp(std::atoi(flags.c_str()), 0, 262143);
+              id(menu_confirm)[i] = confirm == "1" ? 1 : 0;
+            }
+            if (ok && at == blob.size()) {
+              id(menu_length) = count;
+              id(menu_cached) = true;
+            }
+          }
       - script.execute: boot_led
 
 esp32:
@@ -48,12 +90,22 @@ api:
         item_id: string
         parent_id: string
         label: string
+        kind: string
+        local_command: string
+        confirm: bool
       then:
         - lambda: |-
             if (slot < 0 || slot >= 32 || item_id.empty() || label.empty()) return;
             id(menu_ids)[slot] = item_id.substr(0, 40);
             id(menu_parents)[slot] = parent_id.substr(0, 40);
             id(menu_labels)[slot] = label.substr(0, 64);
+            if (slot == 0) {
+              id(menu_synced) = false;
+              id(menu_cached) = false;
+            }
+            id(menu_kinds)[slot] = kind == "info" || kind == "local" ? kind : "action";
+            id(menu_local_commands)[slot] = local_command.substr(0, 24);
+            id(menu_confirm)[slot] = confirm ? 1 : 0;
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
@@ -67,7 +119,7 @@ api:
       then:
         - lambda: |-
             if (slot >= 0 && slot < 32)
-              id(menu_control_flags)[slot] = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
+              id(menu_control_flags)[slot] = static_cast<int>(std::clamp<int32_t>(flags, 0, 262143));
 
     - action: open_controls
       description: Open a native device control screen
@@ -90,6 +142,11 @@ api:
         modes: string
         current_mode: string
         temp_unit: string
+        cover_position: int
+        fan_percentage: int
+        fan_oscillating: int
+        fan_direction: string
+        media_volume: int
       then:
         - lambda: |-
             if (slot < 0 || slot >= id(menu_length) || slot != id(control_slot)) return;
@@ -99,10 +156,25 @@ api:
             id(control_cursor) = 0;
             id(ctrl_fields).clear();
             id(ctrl_modes).clear();
-            id(ctrl_flags) = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
-            for (int bit : {1, 2, 4, 8, 16, 32, 64})
+            id(ctrl_flags) = static_cast<int>(std::clamp<int32_t>(flags, 0, 262143));
+            for (int bit : {1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
+                            1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072})
               if (id(ctrl_flags) & bit) id(ctrl_fields).push_back(bit);
             id(ctrl_brightness) = std::clamp<int32_t>(brightness, 0, 255);
+            id(ctrl_cover_position) = std::clamp<int32_t>(cover_position, 0, 100);
+            id(ctrl_fan_percentage) = std::clamp<int32_t>(fan_percentage, 0, 100);
+            id(ctrl_fan_oscillating) = fan_oscillating != 0;
+            id(ctrl_fan_direction) = fan_direction == "reverse" ? "reverse" : "forward";
+            id(ctrl_media_volume) = std::clamp<int32_t>(media_volume, 0, 100);
+            if (id(ui_direct_edit) && !id(ctrl_fields).empty()) {
+              const int first = id(ctrl_fields)[0];
+              if (first == 1 || first == 2 || first == 4 || first == 8 ||
+                  first == 16 || first == 32 || first == 64 || first == 128 ||
+                  first == 2048 || first == 16384) {
+                id(control_cursor) = 1;
+                id(control_editing) = true;
+              }
+            }
             id(ctrl_min_kelvin) = std::max(1000, (int)min_kelvin);
             id(ctrl_max_kelvin) = std::max(id(ctrl_min_kelvin), (int)max_kelvin);
             id(ctrl_kelvin) = std::clamp((int)kelvin, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
@@ -147,7 +219,7 @@ api:
         status: string
       then:
         - lambda: |-
-            if (slot >= 0 && slot < 32) id(menu_states)[slot] = status.substr(0, 12);
+            if (slot >= 0 && slot < 32) id(menu_states)[slot] = status.substr(0, 48);
 
     - action: set_menu_count
       description: Set the number of active entries (0 to 32)
@@ -156,6 +228,7 @@ api:
       then:
         - lambda: |-
             id(menu_length) = static_cast<int>(std::clamp<int32_t>(count, 0, 32));
+            id(menu_cached) = false;
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
@@ -205,6 +278,43 @@ api:
             id: sleep_timeout_number
             value: !lambda 'return static_cast<float>(std::clamp<int32_t>(seconds, 0, 3600));'
 
+    - action: set_shortcut_config
+      description: Configure extra button gestures
+      variables:
+        double_enabled: bool
+        triple_enabled: bool
+        hold_enabled: bool
+      then:
+        - lambda: |-
+            id(shortcut_double) = double_enabled;
+            id(shortcut_triple) = triple_enabled;
+            id(shortcut_hold) = hold_enabled;
+
+    - action: set_user_settings
+      description: Apply device-local display and input preferences
+      variables:
+        language: string
+        font_size: string
+        direct_edit: bool
+        brightness_step: int
+        encoder_inverted: bool
+        animations: bool
+        animation_ms: int
+        oled_contrast: int
+        offline_cache: bool
+      then:
+        - lambda: |-
+            id(ui_language) = language == "en" ? "en" : "fr";
+            id(ui_font_size) = font_size == "small" ? "small" : "normal";
+            id(ui_direct_edit) = direct_edit;
+            id(ui_brightness_step) = brightness_step == 1 || brightness_step == 10 ? brightness_step : 5;
+            id(ui_encoder_inverted) = encoder_inverted;
+            id(ui_animations) = animations;
+            id(ui_animation_ms) = std::clamp<int32_t>(animation_ms, 100, 500);
+            id(ui_contrast) = std::clamp<int32_t>(oled_contrast, 1, 100);
+            id(ui_offline_cache) = offline_cache;
+            id(oled).set_contrast(id(ui_contrast) / 100.0f);
+
     - action: set_extension_status
       description: Report the latest integration synchronization time
       variables:
@@ -215,6 +325,30 @@ api:
             id(extension_last_update).publish_state(last_update.substr(0, 48));
             // Final commit: all menu data and options have been sent by HA.
             id(menu_synced) = true;
+            id(menu_cached) = false;
+            if (id(ui_offline_cache)) {
+              std::string cached;
+              auto add = [&](const std::string &s) {
+                cached += std::to_string(s.size()) + ":" + s;
+              };
+              add("HA6");
+              add(std::to_string(id(menu_length)));
+              for (int i = 0; i < id(menu_length); ++i) {
+                add(id(menu_ids)[i]);
+                add(id(menu_labels)[i]);
+                add(id(menu_parents)[i]);
+                add(id(menu_states)[i]);
+                add(id(menu_kinds)[i]);
+                add(id(menu_local_commands)[i]);
+                add(std::to_string(id(menu_control_flags)[i]));
+                add(std::to_string(id(menu_confirm)[i]));
+              }
+              // NVS-backed string; avoid partial writes for very large menus.
+              if (cached.size() <= 3800 && cached != id(cached_menu_blob))
+                id(cached_menu_blob) = cached;
+            } else {
+              id(cached_menu_blob) = "";
+            }
 
     - action: extension_heartbeat
       description: Keep the integration connectivity diagnostic current
@@ -271,6 +405,11 @@ font:
     glyphsets:
       - GF_Latin_Core
   - file: "gfonts://Roboto"
+    id: compact_font
+    size: 9
+    glyphsets:
+      - GF_Latin_Core
+  - file: "gfonts://Roboto"
     id: footer_font
     size: 8
     glyphsets:
@@ -296,6 +435,24 @@ globals:
   - id: menu_control_flags
     type: std::vector<int>
     initial_value: 'std::vector<int>(32, 0)'
+  - id: menu_kinds
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(32, "action")'
+  - id: menu_local_commands
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_confirm
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(32, 0)'
+  - id: info_slot
+    type: int
+    initial_value: '-1'
+  - id: confirm_slot
+    type: int
+    initial_value: '-1'
+  - id: confirm_cursor
+    type: int
+    initial_value: '0'
   - id: control_slot
     type: int
     initial_value: '-1'
@@ -329,6 +486,21 @@ globals:
   - id: ctrl_brightness
     type: int
     initial_value: '128'
+  - id: ctrl_cover_position
+    type: int
+    initial_value: '0'
+  - id: ctrl_fan_percentage
+    type: int
+    initial_value: '0'
+  - id: ctrl_fan_oscillating
+    type: bool
+    initial_value: 'false'
+  - id: ctrl_fan_direction
+    type: std::string
+    initial_value: '"forward"'
+  - id: ctrl_media_volume
+    type: int
+    initial_value: '50'
   - id: ctrl_kelvin
     type: int
     initial_value: '3000'
@@ -378,6 +550,53 @@ globals:
     type: int
     initial_value: '0'
   - id: menu_synced
+    type: bool
+    initial_value: 'false'
+  - id: menu_cached
+    type: bool
+    initial_value: 'false'
+  - id: cached_menu_blob
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 3800
+    initial_value: '""'
+  - id: ui_language
+    type: std::string
+    initial_value: '"fr"'
+  - id: ui_font_size
+    type: std::string
+    initial_value: '"normal"'
+  - id: ui_direct_edit
+    type: bool
+    initial_value: 'false'
+  - id: ui_brightness_step
+    type: int
+    initial_value: '5'
+  - id: ui_encoder_inverted
+    type: bool
+    initial_value: 'false'
+  - id: ui_animations
+    type: bool
+    initial_value: 'true'
+  - id: ui_animation_ms
+    type: int
+    initial_value: '220'
+  - id: ui_contrast
+    type: int
+    initial_value: '80'
+  - id: ui_offline_cache
+    type: bool
+    initial_value: 'true'
+  - id: click_count
+    type: int
+    initial_value: '0'
+  - id: shortcut_double
+    type: bool
+    initial_value: 'false'
+  - id: shortcut_triple
+    type: bool
+    initial_value: 'false'
+  - id: shortcut_hold
     type: bool
     initial_value: 'false'
   - id: sync_wait_started
@@ -507,13 +726,20 @@ binary_sensor:
     on_press:
       - lambda: id(press_start) = millis();
     on_release:
-      - if:
-          condition:
-            lambda: 'return (uint32_t)(millis() - id(press_start)) >= 700;'
-          then:
-            - script.execute: long_press
-          else:
-            - script.execute: select_menu
+      - lambda: |-
+          const uint32_t held = (uint32_t)(millis() - id(press_start));
+          if (held >= 1800U && id(shortcut_hold)) {
+            id(click_count) = 0;
+            id(send_shortcut).execute("hold");
+          } else if (held >= 700U) {
+            id(click_count) = 0;
+            id(long_press).execute();
+          } else if (id(shortcut_double) || id(shortcut_triple)) {
+            id(click_count) = std::min(3, id(click_count) + 1);
+            id(dispatch_click).execute();
+          } else {
+            id(select_menu).execute();
+          }
 
 text_sensor:
   - platform: wifi_info
@@ -599,25 +825,25 @@ display:
       if (id(screen_sleep)) return;
       const uint32_t now = millis();
       // Stay on the boot screen until the integration commits a full sync.
-      if (!id(menu_synced)) {
+      if (!id(menu_synced) && !id(menu_cached)) {
         if ((uint32_t)(now - id(sync_wait_started)) >= 30000U) {
           const char *reason = nullptr;
           const char *hint = nullptr;
           if (!id(wifi_node).is_connected()) {
-            reason = "Wi-Fi indisponible";
-            hint = "Verifier le reseau";
+            reason = id(ui_language) == "en" ? "Wi-Fi unavailable" : "Wi-Fi indisponible";
+            hint = id(ui_language) == "en" ? "Check network" : "Verifier le reseau";
           } else if (!id(native_api).is_connected_with_state_subscription()) {
-            reason = "HA non connecte";
-            hint = "Verifier ESPHome";
+            reason = id(ui_language) == "en" ? "HA offline" : "HA non connecte";
+            hint = id(ui_language) == "en" ? "Check ESPHome" : "Verifier ESPHome";
           } else if (id(last_extension_seen) == 0 ||
                      (uint32_t)(now - id(last_extension_seen)) >= 90000U) {
-            reason = "Integration absente";
-            hint = "Verifier HA Menu C3";
+            reason = id(ui_language) == "en" ? "Integration missing" : "Integration absente";
+            hint = id(ui_language) == "en" ? "Check HA Menu C3" : "Verifier HA Menu C3";
           } else {
-            reason = "Menu non recu";
-            hint = "Synchronisation HA";
+            reason = id(ui_language) == "en" ? "Menu not received" : "Menu non recu";
+            hint = id(ui_language) == "en" ? "Check HA sync" : "Synchronisation HA";
           }
-          it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "ERREUR DE CONNEXION");
+          it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "CONNECTION ERROR" : "ERREUR DE CONNEXION");
           it.circle(64, 22, 12, COLOR_ON);
           it.line(59, 17, 69, 27, COLOR_ON);
           it.line(69, 17, 59, 27, COLOR_ON);
@@ -625,7 +851,7 @@ display:
           it.print(64, 51, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER, hint);
           return;
         }
-        it.print(64, 2, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "CONNEXION");
+        it.print(64, 2, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "CONNECTING" : "CONNEXION");
         const int8_t dx[8] = {0, 7, 10, 7, 0, -7, -10, -7};
         const int8_t dy[8] = {-10, -7, 0, 7, 10, 7, 0, -7};
         const int head = static_cast<int>((now / 120U) % 8U);
@@ -637,18 +863,47 @@ display:
                               26 + dy[i] - size / 2,
                               size, size, COLOR_ON);
         }
-        it.print(64, 43, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "En attente de");
+        it.print(64, 43, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "Waiting for" : "En attente de");
         it.print(64, 54, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "Home Assistant");
         return;
       }
 
       // Action feedback: command sent is not the same as physical state confirmed.
+      if (id(info_slot) >= 0 && id(info_slot) < id(menu_length)) {
+        const int slot = id(info_slot);
+        it.print(2, 0, id(title_font), id(menu_labels)[slot].substr(0, 18).c_str());
+        it.line(0, 13, 127, 13);
+        std::string state = id(menu_states)[slot];
+        if (state.empty()) state = id(ui_language) == "en" ? "No data" : "Aucune info";
+        it.print(64, 27, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER,
+                 state.substr(0, 20).c_str());
+        if (state.size() > 20)
+          it.print(64, 39, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                   state.substr(20, 20).c_str());
+        it.print(2, 52, id(title_font), id(ui_language) == "en" ? "< Back" : "< Retour");
+        return;
+      }
+      if (id(confirm_slot) >= 0 && id(confirm_slot) < id(menu_length)) {
+        it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                 id(ui_language) == "en" ? "CONFIRM ACTION" : "CONFIRMER ACTION");
+        it.line(0, 13, 127, 13);
+        it.print(64, 20, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER,
+                 id(menu_labels)[id(confirm_slot)].substr(0, 19).c_str());
+        const char *labels[2] = {id(ui_language) == "en" ? "Cancel" : "Annuler",
+                                  id(ui_language) == "en" ? "Yes" : "Oui"};
+        for (int n = 0; n < 2; ++n) {
+          const int y = 36 + n * 13;
+          if (n == id(confirm_cursor)) it.filled_rectangle(0, y, 124, 12, COLOR_ON);
+          it.print(6, y, id(menu_font), n == id(confirm_cursor) ? COLOR_OFF : COLOR_ON, labels[n]);
+        }
+        return;
+      }
       if (id(feedback_mode) != 0) {
         const int mode = id(feedback_mode);
         if (mode == 1) {
-          it.print(3, 2, id(title_font), "EN COURS");
+          it.print(3, 2, id(title_font), id(ui_language) == "en" ? "WORKING" : "EN COURS");
           it.line(0, 14, 127, 14);
-          it.print(4, 24, id(menu_font), "Commande envoyee...");
+          it.print(4, 24, id(menu_font), id(ui_language) == "en" ? "Command sent..." : "Commande envoyee...");
           it.filled_rectangle((now / 9U) % 118U, 47, 10, 3);
         } else {
           const bool ok = mode == 2;
@@ -666,7 +921,7 @@ display:
           if (ok) {
             stroke(56, 17, 62, 23, 160);
             stroke(62, 23, 74, 10, 340);
-            it.print(64, 32, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "TERMINE");
+            it.print(64, 32, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "DONE" : "TERMINE");
             if (!id(feedback_item).empty())
               it.print(64, 44, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER,
                        id(feedback_item).substr(0, 22).c_str());
@@ -695,9 +950,9 @@ display:
       }
 
       if (id(control_loading)) {
-        it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "REGLAGES");
+        it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "SETTINGS" : "REGLAGES");
         it.line(0, 15, 127, 15);
-        it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "Chargement...");
+        it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "Loading..." : "Chargement...");
         it.filled_rectangle(16 + ((now / 12U) % 86U), 47, 12, 3);
         return;
       }
@@ -716,16 +971,27 @@ display:
           const bool active = row == id(control_cursor);
           const auto color = active ? COLOR_OFF : COLOR_ON;
           if (active) it.filled_rectangle(0, y, 125, 12, COLOR_ON);
-          const char *label = row == 0 ? "< Retour" : "";
+          const char *label = row == 0 ? (id(ui_language) == "en" ? "< Back" : "< Retour") : "";
           std::string value = "";
           switch (field) {
-            case 1: label = "Intensite"; value = std::to_string((id(ctrl_brightness) * 100 + 127) / 255) + "%"; break;
-            case 2: label = "Blanc"; value = std::to_string(id(ctrl_kelvin)) + "K"; break;
-            case 4: label = "Teinte"; value = std::to_string(id(ctrl_hue)); break;
-            case 8: label = "Consigne"; value = std::to_string(id(ctrl_temp) / 10) + "." + std::to_string(std::abs(id(ctrl_temp) % 10)) + id(ctrl_temp_unit); break;
+            case 1: label = id(ui_language) == "en" ? "Brightness" : "Intensite"; value = std::to_string((id(ctrl_brightness) * 100 + 127) / 255) + "%"; break;
+            case 2: label = id(ui_language) == "en" ? "White" : "Blanc"; value = std::to_string(id(ctrl_kelvin)) + "K"; break;
+            case 4: label = id(ui_language) == "en" ? "Hue" : "Teinte"; value = std::to_string(id(ctrl_hue)); break;
+            case 8: label = id(ui_language) == "en" ? "Target" : "Consigne"; value = std::to_string(id(ctrl_temp) / 10) + "." + std::to_string(std::abs(id(ctrl_temp) % 10)) + id(ctrl_temp_unit); break;
             case 16: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
-            case 32: label = "Humidite"; value = std::to_string(id(ctrl_humidity)) + "%"; break;
+            case 32: label = id(ui_language) == "en" ? "Humidity" : "Humidite"; value = std::to_string(id(ctrl_humidity)) + "%"; break;
             case 64: label = "Mode"; if (!id(ctrl_modes).empty()) value = id(ctrl_modes)[id(ctrl_mode_index)]; break;
+            case 128: label = id(ui_language) == "en" ? "Position" : "Position"; value = std::to_string(id(ctrl_cover_position)) + "%"; break;
+            case 256: label = "Ouvrir"; if (id(ui_language) == "en") label = "Open"; break;
+            case 512: label = "Stop"; break;
+            case 1024: label = id(ui_language) == "en" ? "Close" : "Fermer"; break;
+            case 2048: label = id(ui_language) == "en" ? "Speed" : "Vitesse"; value = std::to_string(id(ctrl_fan_percentage)) + "%"; break;
+            case 4096: label = id(ui_language) == "en" ? "Oscillation" : "Oscillation"; value = id(ctrl_fan_oscillating) ? "ON" : "OFF"; break;
+            case 8192: label = id(ui_language) == "en" ? "Direction" : "Direction"; value = id(ctrl_fan_direction) == "reverse" ? "REV" : "FWD"; break;
+            case 16384: label = "Volume"; value = std::to_string(id(ctrl_media_volume)) + "%"; break;
+            case 32768: label = id(ui_language) == "en" ? "Play/Pause" : "Lire/Pause"; break;
+            case 65536: label = id(ui_language) == "en" ? "Next" : "Suivant"; break;
+            case 131072: label = id(ui_language) == "en" ? "Previous" : "Precedent"; break;
           }
           if (value.size() > 9) value = value.substr(0, 9);
           it.print(3, y, id(title_font), color, label);
@@ -741,7 +1007,8 @@ display:
 
       auto render_page = [&](const std::string &page, int x, int selection) {
         const bool about = page == "__about";
-        std::string title = about ? "A PROPOS" : "HA MENU";
+        std::string title = about ? (id(ui_language) == "en" ? "ABOUT" : "A PROPOS") :
+                            ((!id(menu_synced) || !id(native_api).is_connected_with_state_subscription()) ? "OFFLINE" : "HA MENU");
         for (int i = 0; !about && i < id(menu_length); i++) {
           if (!page.empty() && id(menu_ids)[i] == page) {
             title = id(menu_labels)[i];
@@ -788,7 +1055,8 @@ display:
           std::string name = label;
           const size_t name_limit = has_status ? 11U : 17U;
           if (name.size() > name_limit) name = name.substr(0, name_limit);
-          it.print(x + 3, y, id(menu_font), ink, name.c_str());
+          auto chosen_font = id(ui_font_size) == "small" ? id(compact_font) : id(menu_font);
+          it.print(x + 3, y, chosen_font, ink, name.c_str());
           if (submenu) {
             it.print(x + 118, y, id(menu_font), ink, ">");
           } else if (controls) {
@@ -807,7 +1075,7 @@ display:
         };
         if (about) {
           std::string info[9] = {
-            "< Retour", "FW: ${fw_version}",
+            (id(ui_language) == "en" ? "< Back" : "< Retour"), "FW: ${fw_version}",
             std::string("WiFi: ") + (id(wifi_node).is_connected() ? "OK" : "OFF"),
             std::string("SSID: ") + id(device_ssid).state,
             std::string("IP: ") + id(device_ip).state,
@@ -819,7 +1087,7 @@ display:
           for (int i = 0; i < 9; i++) draw_row(i, info[i], "", false, false);
         } else {
           int pos = 0;
-          if (has_back) draw_row(pos++, "< Retour", "", false, false);
+          if (has_back) draw_row(pos++, id(ui_language) == "en" ? "< Back" : "< Retour", "", false, false);
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] != page) continue;
             bool submenu = false;
@@ -829,7 +1097,7 @@ display:
             draw_row(pos++, id(menu_labels)[i], submenu ? "" : id(menu_states)[i], submenu,
                       !submenu && id(menu_control_flags)[i] != 0);
           }
-          if (page.empty()) draw_row(pos, "A Propos", "", true, false);
+          if (page.empty()) draw_row(pos, id(ui_language) == "en" ? "About" : "A Propos", "", true, false);
         }
         if (total > visible) {
           const int track = 48;
@@ -841,8 +1109,8 @@ display:
       };
 
       const uint32_t age = (uint32_t)(now - id(transition_started));
-      if (id(transition_direction) != 0 && age < 220) {
-        const int dx = (int)((age * 128U) / 220U);
+      if (id(ui_animations) && id(transition_direction) != 0 && age < (uint32_t)id(ui_animation_ms)) {
+        const int dx = (int)((age * 128U) / (uint32_t)id(ui_animation_ms));
         if (id(transition_direction) > 0) {
           render_page(id(previous_page), -dx, id(previous_cursor));
           render_page(id(current_page), 128 - dx, id(cursor));
@@ -900,13 +1168,49 @@ script:
             ext_connected: !lambda 'return (uint32_t)(millis() - id(last_extension_seen)) < 90000U ? std::string("on") : std::string("off");'
             last_sync: !lambda 'return id(extension_last_update).state;'
 
+  - id: dispatch_click
+    mode: restart
+    then:
+      - delay: 320ms
+      - lambda: |-
+          if (id(menu_button).state) return;
+          const int count = id(click_count);
+          id(click_count) = 0;
+          if (count >= 3 && id(shortcut_triple)) {
+            id(send_shortcut).execute("triple");
+          } else if (count >= 2 && id(shortcut_double)) {
+            id(send_shortcut).execute("double");
+          } else if (count > 0) {
+            id(select_menu).execute();
+          }
+
+  - id: send_shortcut
+    mode: restart
+    parameters:
+      gesture: string
+    then:
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - homeassistant.event:
+                event: esphome.ha_menu_shortcut
+                data:
+                  device: ${device_name}
+                data_template:
+                  gesture: "{{ gesture_key }}"
+                variables:
+                  gesture_key: !lambda 'return gesture;'
+
   - id: move_cursor
     mode: restart
     parameters:
       direction: int
     then:
       - lambda: |-
-          if (!id(menu_synced)) return;
+          if (!id(menu_synced) && !id(menu_cached)) return;
+          const int delta = id(ui_encoder_inverted) ? -direction : direction;
           const uint32_t now = millis();
           // Guard against mechanical bounce; tune encoder_debounce_ms.
           if ((uint32_t)(now - id(last_encoder_step)) < ${encoder_debounce_ms}) return;
@@ -924,11 +1228,16 @@ script:
             id(feedback_suppressed) = true;
             return;
           }
+          if (id(info_slot) >= 0) return;
+          if (id(confirm_slot) >= 0) {
+            id(confirm_cursor) = 1 - id(confirm_cursor);
+            return;
+          }
           if (id(control_loading)) return;
           if (id(control_open)) {
             if (!id(control_editing)) {
               const int total = (int)id(ctrl_fields).size() + 1;
-              id(control_cursor) = (id(control_cursor) + direction + total) % total;
+              id(control_cursor) = (id(control_cursor) + delta + total) % total;
               return;
             }
             if (id(control_cursor) == 0 || id(control_cursor) > (int)id(ctrl_fields).size()) return;
@@ -939,26 +1248,35 @@ script:
               case 1:
                 {
                   const int percent = (id(ctrl_brightness) * 100 + 127) / 255;
-                  const int next_percent = std::clamp(percent + direction * 5, 0, 100);
+                  const int next_percent = std::clamp(percent + delta * id(ui_brightness_step), 0, 100);
                   id(ctrl_brightness) = (next_percent * 255 + 50) / 100;
                 }
                 id(ctrl_field) = "brightness"; current = id(ctrl_brightness); break;
               case 2:
-                id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + direction * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
+                id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + delta * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
                 id(ctrl_field) = "color_temp"; current = id(ctrl_kelvin); break;
               case 4:
-                id(ctrl_hue) = (id(ctrl_hue) + direction * 15 + 360) % 360;
+                id(ctrl_hue) = (id(ctrl_hue) + delta * 15 + 360) % 360;
                 id(ctrl_field) = "color"; current = id(ctrl_hue); break;
               case 8:
-                id(ctrl_temp) = std::clamp(id(ctrl_temp) + direction * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
+                id(ctrl_temp) = std::clamp(id(ctrl_temp) + delta * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
                 id(ctrl_field) = "temperature"; current = id(ctrl_temp); break;
               case 32:
-                id(ctrl_humidity) = std::clamp(id(ctrl_humidity) + direction * id(ctrl_humidity_step), id(ctrl_min_humidity), id(ctrl_max_humidity));
+                id(ctrl_humidity) = std::clamp(id(ctrl_humidity) + delta * id(ctrl_humidity_step), id(ctrl_min_humidity), id(ctrl_max_humidity));
                 id(ctrl_field) = "humidity"; current = id(ctrl_humidity); break;
+              case 128:
+                id(ctrl_cover_position) = std::clamp(id(ctrl_cover_position) + delta * id(ui_brightness_step), 0, 100);
+                id(ctrl_field) = "cover_position"; current = id(ctrl_cover_position); break;
+              case 2048:
+                id(ctrl_fan_percentage) = std::clamp(id(ctrl_fan_percentage) + delta * id(ui_brightness_step), 0, 100);
+                id(ctrl_field) = "fan_percentage"; current = id(ctrl_fan_percentage); break;
+              case 16384:
+                id(ctrl_media_volume) = std::clamp(id(ctrl_media_volume) + delta * id(ui_brightness_step), 0, 100);
+                id(ctrl_field) = "media_volume"; current = id(ctrl_media_volume); break;
               case 16:
               case 64:
                 if (id(ctrl_modes).empty()) return;
-                id(ctrl_mode_index) = (id(ctrl_mode_index) + direction + (int)id(ctrl_modes).size()) % (int)id(ctrl_modes).size();
+                id(ctrl_mode_index) = (id(ctrl_mode_index) + delta + (int)id(ctrl_modes).size()) % (int)id(ctrl_modes).size();
                 id(ctrl_field) = field == 16 ? "hvac_mode" : "humidifier_mode";
                 id(ctrl_value) = id(ctrl_modes)[id(ctrl_mode_index)];
                 id(send_adjust).execute(id(menu_ids)[id(control_slot)], id(ctrl_field), id(ctrl_value));
@@ -977,7 +1295,7 @@ script:
             }
           }
           if (children > 0) {
-            id(cursor) = (id(cursor) + direction + children) % children;
+            id(cursor) = (id(cursor) + delta + children) % children;
           } else {
             id(cursor) = 0;
           }
@@ -1041,7 +1359,7 @@ script:
     mode: restart
     then:
       - lambda: |-
-          if (!id(menu_synced)) return;
+          if (!id(menu_synced) && !id(menu_cached)) return;
           bool was_asleep = id(screen_sleep);
           id(screen_sleep) = false;
           id(last_input) = millis();
@@ -1056,12 +1374,46 @@ script:
             id(feedback_suppressed) = true;
             return;
           }
+          if (id(info_slot) >= 0) { id(info_slot) = -1; return; }
+          if (id(confirm_slot) >= 0) {
+            const int slot = id(confirm_slot);
+            const bool approved = id(confirm_cursor) == 1;
+            id(confirm_slot) = -1;
+            if (approved) id(execute_item).execute(slot, true);
+            return;
+          }
           if (id(control_loading)) return;
           if (id(control_open)) {
             if (!id(control_editing) && id(control_cursor) == 0) {
               id(control_open) = false;
               id(control_editing) = false;
               return;
+            }
+            if (!id(control_editing) && id(control_cursor) > 0 &&
+                id(control_cursor) <= (int)id(ctrl_fields).size()) {
+              const int field = id(ctrl_fields)[id(control_cursor) - 1];
+              const int slot = id(control_slot);
+              if (slot >= 0 && slot < id(menu_length)) {
+                std::string key, value = "1";
+                switch (field) {
+                  case 256: key = "cover_open"; break;
+                  case 512: key = "cover_stop"; break;
+                  case 1024: key = "cover_close"; break;
+                  case 4096:
+                    id(ctrl_fan_oscillating) = !id(ctrl_fan_oscillating);
+                    key = "fan_oscillate"; value = id(ctrl_fan_oscillating) ? "1" : "0"; break;
+                  case 8192:
+                    id(ctrl_fan_direction) = id(ctrl_fan_direction) == "forward" ? "reverse" : "forward";
+                    key = "fan_direction"; value = id(ctrl_fan_direction); break;
+                  case 32768: key = "media_toggle"; break;
+                  case 65536: key = "media_next"; break;
+                  case 131072: key = "media_previous"; break;
+                }
+                if (!key.empty()) {
+                  id(send_adjust).execute(id(menu_ids)[slot], key, value);
+                  return;
+                }
+              }
             }
             id(control_editing) = !id(control_editing);
             return;
@@ -1089,12 +1441,7 @@ script:
                 return;
               }
             }
-            id(pending_item) = id(menu_ids)[i];
-            id(feedback_item) = id(menu_labels)[i];
-            id(feedback_message).clear();
-            id(feedback_suppressed) = false;
-            id(feedback_mode) = 1;
-            id(send_selection).execute();
+            id(execute_item).execute(i, false);
             return;
           }
           // Permanent last item in the root menu.
@@ -1107,11 +1454,70 @@ script:
             id(transition_started) = millis();
           }
 
+  - id: execute_item
+    mode: restart
+    parameters:
+      slot: int
+      confirmed: bool
+    then:
+      - lambda: |-
+          if (slot < 0 || slot >= id(menu_length)) return;
+          const std::string kind = id(menu_kinds)[slot];
+          if (kind == "info") {
+            id(info_slot) = slot;
+            return;
+          }
+          if (!confirmed && id(menu_confirm)[slot]) {
+            id(confirm_slot) = slot;
+            id(confirm_cursor) = 0;
+            return;
+          }
+          if (kind == "local") {
+            id(run_local).execute(id(menu_local_commands)[slot]);
+            return;
+          }
+          if (!id(menu_synced) || !id(native_api).is_connected_with_state_subscription()) {
+            id(feedback_mode) = 3;
+            id(feedback_message) = id(ui_language) == "en" ? "Home Assistant offline" : "Home Assistant hors ligne";
+            id(feedback_started) = millis();
+            return;
+          }
+          id(pending_item) = id(menu_ids)[slot];
+          id(feedback_item) = id(menu_labels)[slot];
+          id(feedback_message).clear();
+          id(feedback_suppressed) = false;
+          id(feedback_mode) = 1;
+          id(send_selection).execute();
+
+  - id: run_local
+    mode: restart
+    parameters:
+      command: string
+    then:
+      - if:
+          condition:
+            lambda: 'return command == "identify";'
+          then:
+            - script.execute: identify_led
+      - if:
+          condition:
+            lambda: 'return command == "led_toggle";'
+          then:
+            - light.toggle: status_rgb
+      - if:
+          condition:
+            lambda: 'return command == "oled_sleep";'
+          then:
+            - lambda: |-
+                id(screen_sleep) = !id(screen_sleep);
+                if (id(screen_sleep)) id(oled).turn_off();
+                else id(oled).turn_on();
+
   - id: long_press
     mode: restart
     then:
       - lambda: |-
-          if (!id(menu_synced)) return;
+          if (!id(menu_synced) && !id(menu_cached)) return;
           const uint32_t now = millis();
           const bool was_asleep = id(screen_sleep);
           id(last_input) = now;
@@ -1125,6 +1531,8 @@ script:
             id(feedback_mode) = 0;
             return;
           }
+          if (id(info_slot) >= 0) { id(info_slot) = -1; return; }
+          if (id(confirm_slot) >= 0) { id(confirm_slot) = -1; return; }
           if (id(control_loading) || id(control_open)) {
             id(control_loading) = false;
             id(control_open) = false;
@@ -1138,7 +1546,7 @@ script:
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] != id(current_page)) continue;
             if (position++ != id(cursor)) continue;
-            if (id(menu_control_flags)[i] != 0) {
+            if (id(menu_synced) && id(native_api).is_connected_with_state_subscription() && id(menu_control_flags)[i] != 0) {
               id(control_slot) = i;
               id(control_loading) = true;
               id(control_started) = now;

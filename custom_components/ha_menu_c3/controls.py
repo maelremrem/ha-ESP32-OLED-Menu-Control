@@ -8,6 +8,10 @@ BITS = {
     "brightness": 1, "color_temp": 2, "color": 4,
     "temperature": 8, "hvac_mode": 16,
     "humidity": 32, "humidifier_mode": 64,
+    "cover_position": 128, "cover_open": 256, "cover_stop": 512, "cover_close": 1024,
+    "fan_percentage": 2048, "fan_oscillate": 4096, "fan_direction": 8192,
+    "media_volume": 16384, "media_toggle": 32768,
+    "media_next": 65536, "media_previous": 131072,
 }
 COLORS = {"hs", "rgb", "rgbw", "rgbww", "xy"}
 
@@ -39,6 +43,8 @@ def attributes_payload(item: dict, state) -> dict:
         "min_temp_x10": 70, "max_temp_x10": 350, "temp_step_x10": 5,
         "min_humidity": 0, "max_humidity": 100, "humidity_step": 1,
         "modes": "", "current_mode": "", "temp_unit": "C",
+        "cover_position": 0, "fan_percentage": 0, "fan_oscillating": 0,
+        "fan_direction": "forward", "media_volume": 50,
     }
     if not state or state.state in ("unknown", "unavailable"):
         return payload
@@ -86,6 +92,40 @@ def attributes_payload(item: dict, state) -> dict:
         payload["max_humidity"] = bounded_int(attrs.get("max_humidity"), payload["min_humidity"], 100, 100)
         payload["humidity_step"] = bounded_int(attrs.get("target_humidity_step"), 1, 20, 1)
         payload["humidity"] = bounded_int(attrs.get("humidity", attrs.get("target_humidity")), payload["min_humidity"], payload["max_humidity"], 50)
+    elif domain == "cover":
+        features = bounded_int(attrs.get("supported_features"), 0, 2**20, 0)
+        for name, supported in (
+            ("cover_position", features & 4), ("cover_open", features & 1),
+            ("cover_stop", features & 8), ("cover_close", features & 2),
+        ):
+            if settings.get(name) and supported:
+                payload["flags"] |= BITS[name]
+        payload["cover_position"] = bounded_int(attrs.get("current_position"), 0, 100, 0)
+    elif domain == "fan":
+        features = bounded_int(attrs.get("supported_features"), 0, 2**20, 0)
+        for name, feature in (
+            ("fan_percentage", 1), ("fan_oscillate", 2), ("fan_direction", 4),
+        ):
+            if settings.get(name) and features & feature:
+                payload["flags"] |= BITS[name]
+        payload["fan_percentage"] = bounded_int(attrs.get("percentage"), 0, 100, 0)
+        payload["fan_oscillating"] = int(attrs.get("oscillating") is True)
+        payload["fan_direction"] = "reverse" if attrs.get("direction") == "reverse" else "forward"
+    elif domain == "media_player":
+        features = bounded_int(attrs.get("supported_features"), 0, 2**24, 0)
+        for name, supported in (
+            ("media_volume", features & 4),
+            ("media_toggle", features & (1 | 16384)),
+            ("media_next", features & 32),
+            ("media_previous", features & 16),
+        ):
+            if settings.get(name) and supported:
+                payload["flags"] |= BITS[name]
+        try:
+            volume = float(attrs.get("volume_level") or 0) * 100
+        except (ValueError, TypeError):
+            volume = 50
+        payload["media_volume"] = bounded_int(volume, 0, 100, 50)
     return payload
 
 
@@ -100,7 +140,7 @@ def adjustment(item: dict, state, field: str, value: str) -> Adjustment:
         number = float(value)
     except (ValueError, TypeError):
         number = None
-    if field in ("brightness", "color_temp", "color", "temperature", "humidity") and (number is None or not number == number or number == float("inf") or number == float("-inf")):
+    if field in ("brightness", "color_temp", "color", "temperature", "humidity", "cover_position", "fan_percentage", "media_volume") and (number is None or not number == number or number == float("inf") or number == float("-inf")):
         raise ValueError("Valeur invalide")
     data = {"entity_id": entity}
     if field == "brightness":
@@ -122,6 +162,31 @@ def adjustment(item: dict, state, field: str, value: str) -> Adjustment:
     if field == "humidity":
         data["humidity"] = bounded_int(number, payload["min_humidity"], payload["max_humidity"], payload["humidity"])
         return Adjustment("humidifier", "set_humidity", data)
+    if field == "cover_position":
+        data["position"] = bounded_int(number, 0, 100, 0)
+        return Adjustment("cover", "set_cover_position", data)
+    if field in ("cover_open", "cover_stop", "cover_close"):
+        return Adjustment("cover", {"cover_open": "open_cover",
+                                     "cover_stop": "stop_cover",
+                                     "cover_close": "close_cover"}[field], data)
+    if field == "fan_percentage":
+        data["percentage"] = bounded_int(number, 0, 100, 0)
+        return Adjustment("fan", "set_percentage", data)
+    if field == "fan_oscillate":
+        data["oscillating"] = str(value) in ("true", "1", "on")
+        return Adjustment("fan", "oscillate", data)
+    if field == "fan_direction":
+        if value not in ("forward", "reverse"):
+            raise ValueError("Direction invalide")
+        data["direction"] = value
+        return Adjustment("fan", "set_direction", data)
+    if field == "media_volume":
+        data["volume_level"] = bounded_int(number, 0, 100, 50) / 100
+        return Adjustment("media_player", "volume_set", data)
+    if field in ("media_toggle", "media_next", "media_previous"):
+        return Adjustment("media_player", {"media_toggle": "media_play_pause",
+                          "media_next": "media_next_track",
+                          "media_previous": "media_previous_track"}[field], data)
     selected = str(value)
     modes = payload["modes"].split("|")
     if selected not in modes:

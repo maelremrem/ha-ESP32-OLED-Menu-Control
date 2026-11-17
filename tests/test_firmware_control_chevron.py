@@ -26,7 +26,7 @@ class LongPressChevronTests(unittest.TestCase):
 
     def test_firmware_versions_and_secrets(self):
         for path in FIRMWARE:
-            self.assertIn('fw_version: "0.5.5"', path.read_text(encoding="utf-8"))
+            self.assertIn('fw_version: "0.6.0"', path.read_text(encoding="utf-8"))
         standalone = FIRMWARE[0].read_text(encoding="utf-8")
         package = FIRMWARE[1].read_text(encoding="utf-8")
         self.assertIn("key: !secret api_encryption_key", standalone)

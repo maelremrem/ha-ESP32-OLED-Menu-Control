@@ -19,7 +19,7 @@ class StartupDiagnosticsTests(unittest.TestCase):
                 self.assertIn("id(menu_synced) = false;", source)
                 self.assertIn("initial_value: '0'", source)
                 self.assertIn("(uint32_t)(now - id(sync_wait_started)) >= 30000U", source)
-                self.assertIn("if (!id(menu_synced)) {", source)
+                self.assertIn("if (!id(menu_synced) && !id(menu_cached)) {", source)
                 self.assertIn("id(menu_synced) = true;", source)
 
     def test_connection_error_reasons(self):

@@ -23,7 +23,7 @@ class RealtimeBrightnessFirmwareTests(unittest.TestCase):
                 self.assertIn("field: \"{{ field_key }}\"", script)
                 self.assertIn("value: \"{{ field_value }}\"", script)
                 self.assertIn("id(send_adjust).execute(", source)
-                self.assertIn('fw_version: "0.5.7"', source)
+                self.assertIn('fw_version: "0.6.0"', source)
 
     def test_secrets_stay_local(self):
         standalone = FILES[0].read_text(encoding="utf-8")

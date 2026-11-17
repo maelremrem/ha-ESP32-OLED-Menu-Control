@@ -6,6 +6,147 @@ const clone = (obj) => JSON.parse(JSON.stringify(obj));
 const rgbHex = (rgb) => "#" + rgb.map((n) => n.toString(16).padStart(2, "0")).join("");
 const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
+const EN_TRANSLATIONS = {
+  "Menus, actions et LED": "Menus, actions and LED",
+  "Appareil": "Device",
+  "Synchronisé": "Synced",
+  "Hors ligne": "Offline",
+  "Non synchronisé": "Not synced",
+  "Identifier": "Identify",
+  "Synchroniser": "Sync",
+  "Enregistrer": "Save",
+  "Menus": "Menus",
+  "Réglages et état": "Settings & status",
+  "Arborescence": "Menu tree",
+  "Éditeur d'entrée": "Entry editor",
+  "LED RGB permanente": "Persistent RGB LED",
+  "Réglages": "Settings",
+  "État de l'appareil": "Device status",
+  "Actualiser": "Refresh",
+  "+ Entrée": "+ Entry",
+  "+ Sous-menu": "+ Submenu",
+  "Menu parent": "Parent menu",
+  "Racine": "Root",
+  "Nom affiché sur l'OLED": "Name shown on OLED",
+  "Identifiant (stable)": "Identifier (stable)",
+  "Identifiant conservé si le nom change.": "ID stays the same when the label changes.",
+  "Type d'entrée": "Entry type",
+  "Action Home Assistant": "Home Assistant action",
+  "Information seulement": "Information only",
+  "Action locale (hors ligne)": "Local action (offline)",
+  "Action locale": "Local action",
+  "Identifier (LED)": "Identify (LED)",
+  "Basculer la LED": "Toggle LED",
+  "Veille OLED": "OLED sleep",
+  "Confirmation avant exécution": "Require confirmation",
+  "Service (domaine.action)": "Service (domain.action)",
+  "Entité cible": "Target entity",
+  "Entité": "Entity",
+  "Données supplémentaires (JSON facultatif)": "Additional data (optional JSON)",
+  "Appliquer les réglages": "Apply controls",
+  "Réglages par appui long": "Long-press controls",
+  "Basculer une lumière": "Toggle a light",
+  "Allumer une lumière": "Turn on a light",
+  "Éteindre une lumière": "Turn off a light",
+  "Basculer une prise / un interrupteur": "Toggle a switch / outlet",
+  "Allumer une prise / un interrupteur": "Turn on a switch / outlet",
+  "Éteindre une prise / un interrupteur": "Turn off a switch / outlet",
+  "Basculer une entité (universel)": "Toggle entity (universal)",
+  "Activer un thermostat": "Enable thermostat",
+  "Arrêter un thermostat": "Turn off thermostat",
+  "Basculer un humidificateur": "Toggle humidifier",
+  "Activer un humidificateur": "Turn on humidifier",
+  "Arrêter un humidificateur": "Turn off humidifier",
+  "Ouvrir un volet / portail": "Open cover / gate",
+  "Fermer un volet / portail": "Close cover / gate",
+  "Lancer un script": "Run script",
+  "Activer une scène": "Activate scene",
+  "Autre action...": "Other action...",
+  "Aucune / dossier": "None / folder",
+  "Intensité (0–100 %)": "Brightness (0–100%)",
+  "Température (K)": "Color temperature (K)",
+  "Couleur": "Color",
+  "Température cible": "Target temperature",
+  "Mode du thermostat": "HVAC mode",
+  "Humidité cible": "Target humidity",
+  "Mode": "Mode",
+  "Position (0–100 %)": "Position (0–100%)",
+  "Ouvrir": "Open",
+  "Arrêter": "Stop",
+  "Fermer": "Close",
+  "Vitesse (0–100 %)": "Speed (0–100%)",
+  "Oscillation": "Oscillation",
+  "Direction": "Direction",
+  "Volume (0–100 %)": "Volume (0–100%)",
+  "Lecture / pause": "Play / pause",
+  "Morceau suivant": "Next track",
+  "Morceau précédent": "Previous track",
+  "Couleur active": "Active color",
+  "Couleur inactive": "Inactive color",
+  "Taille de police OLED": "OLED font size",
+  "Normale": "Normal",
+  "Petite": "Small",
+  "Pas de luminosité": "Brightness step",
+  "Vitesse d'animation (ms)": "Animation speed (ms)",
+  "Contraste OLED (1–100 %)": "OLED contrast (1–100%)",
+  "Veille écran et LED (secondes)": "Screen and LED sleep (seconds)",
+  "Réglage direct au long clic": "Direct edit on long press",
+  "Inverser la rotation": "Invert encoder rotation",
+  "Animations de navigation": "Menu animations",
+  "Dernier menu disponible hors ligne": "Cache menu for offline use",
+  "Raccourcis de l'encodeur": "Encoder shortcuts",
+  "Double clic": "Double click",
+  "Triple clic": "Triple click",
+  "Maintien prolongé (1,8 s)": "Extended hold (1.8 s)",
+  "Service Home Assistant": "Home Assistant service",
+  "Données du service (JSON)": "Service data (JSON)",
+  "Laisser les champs vides pour désactiver ce raccourci.": "Leave blank to disable the shortcut.",
+  "Déposer ici pour déplacer à la racine (en dernier)": "Drop here to move to root (last)",
+  "Sous-menu": "Submenu",
+  "Action non configurée": "No action configured",
+  "+ Ajouter dans ce menu": "+ Add child entry",
+  "↑ Monter": "↑ Move up",
+  "↓ Descendre": "↓ Move down",
+  "Supprimer": "Delete",
+  "Réseau": "Network",
+  "Adresse IP": "IP address",
+  "Depuis le démarrage": "Uptime",
+  "Connexion HA": "HA connection",
+  "Dernière synchro": "Last sync",
+  "Menu": "Menu",
+  "Connecté": "Connected",
+  "Déconnecté": "Disconnected",
+  "À jour": "Up to date",
+  "En cours": "In progress",
+  "Informations": "Information",
+  "Retour": "Back",
+  "Langue / Language": "Language",
+  "Certaines données manquent. Vérifie les entités de diagnostic ESPHome et flashe le firmware 0.4 pour la remontée directe.": "Some diagnostics are missing. Check ESPHome diagnostic entities.",
+  "0 : toujours allumés. La LED retrouve sa couleur au réveil.": "0: always on. The LED restores its color when awakened."
+};
+
+Object.assign(EN_TRANSLATIONS, {
+  "Choisis une lampe, un volet, un ventilateur, un lecteur multimédia, un thermostat ou un humidificateur.": "Choose a light, cover, fan, media player, thermostat or humidifier.",
+  "Coche les fonctions voulues et clique sur « Appliquer les réglages ». Le clic court garde l'action ci-dessus.": "Enable the controls you want and click Apply controls. A short press still performs the action above.",
+  "Entité introuvable dans les états Home Assistant. Vérifie son identifiant.": "Entity not found in Home Assistant states. Check its ID.",
+  "Recherche par nom ou ID, prises incluses.": "Search by name or entity ID, including outlets.",
+  "Identifiant conservé si le nom change.": "The ID remains unchanged when renaming.",
+  "Cette entrée contient des enfants : elle fonctionne comme un sous-menu.": "This entry has children and acts as a submenu.",
+  "Le clic simple conserve son action. Le long clic classique (0,7 s) ouvre le menu ; le maintien prolongé déclenche le raccourci choisi.": "Single click retains its normal action. Standard long press (0.7 s) opens controls; extended hold triggers your shortcut.",
+  "Glisser pour déplacer. → place sous l'entrée précédente ; ← remonte d'un niveau. « À propos » reste en dernier.": "Drag to reorder. → nests under the previous entry; ← moves up one level. About stays last.",
+  "Menu vide. Ajoute une première entrée.": "Empty menu. Add your first entry.",
+  "Les modifications non enregistrées seront perdues. Changer d'appareil ?": "Unsaved changes will be lost. Switch device?",
+  "Ajouter dans ce menu": "Add inside this menu",
+  "La LED revient à cette couleur après une animation.": "The LED returns to this color after an animation.",
+  "Entrée ajoutée. Pense à enregistrer.": "Entry added. Remember to save.",
+  "Réglages modifiés. Clique sur Appliquer les réglages pour envoyer à l'ESP32.": "Controls changed. Click Apply controls to send them to the ESP32.",
+  "Enregistrement et synchronisation en cours...": "Saving and syncing...",
+  "Synchronisation ESPHome...": "Syncing ESPHome...",
+  "Menu envoyé à l'ESP32.": "Menu sent to ESP32.",
+  "Identification lancée.": "Identification started.",
+  "Aucune entité trouvée. Tu peux toujours saisir son identifiant exact.": "No entity found. You can still enter its exact ID."
+});
+
 const STYLES = `
   :host { display:block; min-height:100%; color:var(--primary-text-color); background:var(--primary-background-color); font:14px/1.45 var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
   * { box-sizing:border-box; }
@@ -198,6 +339,28 @@ class HAMenuC3Panel extends HTMLElement {
     await this.fetch(nextId);
   }
 
+  get language() { return this.status?.config?.settings?.language === "en" ? "en" : "fr"; }
+  localize(root=this.shadowRoot) {
+    if (this.language !== "en" || typeof document === "undefined" || !root) return;
+    const walker = document.createTreeWalker(root, 4);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (parent?.closest(".tree-item,.entity-option")) continue;
+      const text = node.nodeValue;
+      const trim = text.trim();
+      if (EN_TRANSLATIONS[trim]) node.nodeValue = text.replace(trim, EN_TRANSLATIONS[trim]);
+    }
+    if (root.querySelectorAll) {
+      for (const el of root.querySelectorAll("[placeholder],[title]")) {
+        for (const attr of ["placeholder", "title"]) {
+          const raw = el.getAttribute(attr);
+          if (raw && EN_TRANSLATIONS[raw]) el.setAttribute(attr, EN_TRANSLATIONS[raw]);
+        }
+      }
+    }
+  }
+
   get items() { return this.status?.config?.items || []; }
   get selected() { return this.items.find((item) => item.id === this.selectedId) || null; }
   isFolder(item) { return this.items.some((i) => i.parent === item.id); }
@@ -209,7 +372,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="wrap">
       <div class="top">
         <div>
-          <h1>HA Menu C3 <small class="sub">v0.5.4</small></h1>
+          <h1>HA Menu C3 <small class="sub">v0.6.0</small></h1>
           <p class="sub">Menus, actions et LED</p>
         </div>
         <div class="actions">
@@ -262,6 +425,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.renderLed();
     this.renderSettings();
     this.renderDiagnostics();
+    this.localize();
   }
 
   renderNotice() {
@@ -269,8 +433,19 @@ class HAMenuC3Panel extends HTMLElement {
     if (!host) return;
     const backendError = this.status?.sync === "error" && this.status?.error
       ? `Dernière synchronisation : ${this.status.error}` : "";
-    const msg = this.notice || backendError;
+    let msg = this.notice || backendError;
+    if (this.language === "en") {
+      msg = msg.replace("Configuration enregistrée :", "Saved:")
+               .replace(" entrées synchronisées.", " entries synced.")
+               .replace("Configuration enregistrée dans Home Assistant, mais synchronisation impossible :", "Saved to HA, but sync failed:")
+               .replace("Erreur lors de l'enregistrement :", "Save error:")
+               .replace("Synchronisation impossible :", "Sync failed:")
+               .replace("Chargement impossible :", "Loading failed:")
+               .replace("Erreur :", "Error:");
+      msg = EN_TRANSLATIONS[msg] || msg;
+    }
     host.innerHTML = msg ? `<div class="notice ${esc(this.noticeType || (backendError ? "error" : ""))}">${esc(msg)}</div>` : "";
+    this.localize(host);
   }
 
   renderTree() {
@@ -278,6 +453,7 @@ class HAMenuC3Panel extends HTMLElement {
     if (!host) return;
     if (!this.items.length) {
       host.innerHTML = `<div class="empty">Menu vide. Ajoute une première entrée.</div><div class="tree-system">ⓘ À propos <small>(système, dernier)</small></div>`;
+      this.localize(host);
       return;
     }
     const rows = [];
@@ -286,7 +462,7 @@ class HAMenuC3Panel extends HTMLElement {
         const folder = this.isFolder(item);
         const siblings = this.items.filter(i=>i.parent===item.parent);
         const prev = siblings[siblings.findIndex(i=>i.id===item.id)-1];
-        const canIndent = !!prev && !prev.service && !this.isDescendant(prev.id,item.id);
+        const canIndent = !!prev && !prev.service && (prev.kind || "action")==="action" && !this.isDescendant(prev.id,item.id);
         rows.push(`<div role="button" tabindex="0" draggable="true" data-select="${esc(item.id)}" class="tree-row ${item.id === this.selectedId ? "active" : ""}" style="padding-left:${9 + level * 16}px">
           <span class="tree-handle" aria-label="Déplacer">⠿</span><span class="tree-glyph">${folder ? "▸" : "•"}</span>
           <span class="tree-item">${esc(item.label)}<small>${folder ? "Sous-menu" : esc(item.service || "Action non configurée")}</small></span>
@@ -300,6 +476,7 @@ class HAMenuC3Panel extends HTMLElement {
     host.innerHTML = `<div class="tree">${rows.join("")}</div>
       <div class="tree-root-drop" data-drop-root="true">↳ Déposer ici pour déplacer à la racine (en dernier)</div>
       <div class="tree-system">ⓘ À propos <small>(système, dernier)</small></div>`;
+    this.localize(host);
   }
 
   renderEditor() {
@@ -311,6 +488,8 @@ class HAMenuC3Panel extends HTMLElement {
       return;
     }
     const folder = this.isFolder(item);
+    const kind = item.kind || "action";
+    const actionEnabled = !folder && kind === "action";
     // Search is rendered as a filtered list so friendly names (including plugs) are discoverable.
     const parentChoices = [`<option value="">Racine</option>`, ...this.items
       .filter((i)=> i.id !== item.id && !this.isDescendant(i.id, item.id))
@@ -323,9 +502,30 @@ class HAMenuC3Panel extends HTMLElement {
       </div>
       <div class="field"><label>Identifiant (stable)</label><input value="${esc(item.id)}" disabled><div class="hint">Identifiant conservé si le nom change.</div></div>
       <div class="section">
+        <div class="form-grid">
+          <div class="field"><label>Type d'entrée</label>
+            <select data-edit="kind" ${folder ? "disabled" : ""}>
+              <option value="action" ${kind==="action" ? "selected" : ""}>Action Home Assistant</option>
+              <option value="info" ${kind==="info" ? "selected" : ""}>Information seulement</option>
+              <option value="local" ${kind==="local" ? "selected" : ""}>Action locale (hors ligne)</option>
+            </select>
+          </div>
+          <div class="field"><label>Action locale</label>
+            <select data-edit="local_command" ${kind==="local" && !folder ? "" : "disabled"}>
+              <option value="identify" ${item.local_command==="identify" ? "selected" : ""}>Identifier (LED)</option>
+              <option value="led_toggle" ${item.local_command==="led_toggle" ? "selected" : ""}>Basculer la LED</option>
+              <option value="oled_sleep" ${item.local_command==="oled_sleep" ? "selected" : ""}>Veille OLED</option>
+            </select>
+          </div>
+        </div>
+        <label class="control-check" style="margin-bottom:12px">
+          <input type="checkbox" data-confirm="true" ${item.confirm ? "checked" : ""}
+            ${folder || kind==="info" ? "disabled" : ""}>
+          Confirmation avant exécution
+        </label>
         <div class="field">
           <label>Action Home Assistant</label>
-          <select data-edit="preset" ${folder ? "disabled" : ""}>
+          <select data-edit="preset" ${actionEnabled ? "" : "disabled"}>
             <option value="">Aucune / dossier</option>
             <option value="light.toggle">Basculer une lumière</option>
             <option value="light.turn_on">Allumer une lumière</option>
@@ -341,19 +541,26 @@ class HAMenuC3Panel extends HTMLElement {
             <option value="humidifier.turn_off">Arrêter un humidificateur</option>
             <option value="cover.open_cover">Ouvrir un volet / portail</option>
             <option value="cover.close_cover">Fermer un volet / portail</option>
+            <option value="cover.stop_cover">Arrêter un volet / portail</option>
+            <option value="fan.toggle">Basculer un ventilateur</option>
+            <option value="fan.turn_on">Allumer un ventilateur</option>
+            <option value="fan.turn_off">Éteindre un ventilateur</option>
+            <option value="media_player.media_play_pause">Lecture / pause</option>
+            <option value="media_player.media_next_track">Morceau suivant</option>
+            <option value="media_player.media_previous_track">Morceau précédent</option>
             <option value="script.turn_on">Lancer un script</option>
             <option value="scene.turn_on">Activer une scène</option>
             <option value="custom">Autre action...</option>
           </select>
           ${folder ? `<div class="hint">Cette entrée contient des enfants : elle fonctionne comme un sous-menu.</div>` : ""}
         </div>
-        <div class="field"><label>Service (domaine.action)</label><input data-edit="service" value="${esc(item.service)}" placeholder="light.toggle" ${folder ? "disabled" : ""}></div>
+        <div class="field"><label>Service (domaine.action)</label><input data-edit="service" value="${esc(item.service)}" placeholder="light.toggle" ${actionEnabled ? "" : "disabled"}></div>
         <div class="field"><label>Entité cible</label>
-          <input data-edit="entity_id" data-entity-search="true" autocomplete="off" value="${esc(item.entity_id)}" placeholder="Rechercher par nom ou identifiant (ex : prise, salon...)" ${folder ? "disabled" : ""}>
+          <input data-edit="entity_id" data-entity-search="true" autocomplete="off" value="${esc(item.entity_id)}" placeholder="Rechercher par nom ou identifiant (ex : prise, salon...)" ${folder || kind==="local" ? "disabled" : ""}>
           <div id="entity-results"></div>
           <div class="hint">Recherche par nom ou ID, prises incluses.</div>
         </div>
-        <div class="field"><label>Données supplémentaires (JSON facultatif)</label><textarea data-edit="data" spellcheck="false" ${folder ? "disabled" : ""}>${esc(this.editJson)}</textarea>
+        <div class="field"><label>Données supplémentaires (JSON facultatif)</label><textarea data-edit="data" spellcheck="false" ${actionEnabled ? "" : "disabled"}>${esc(this.editJson)}</textarea>
           <div class="hint">Exemple : {"brightness_pct": 60}</div>
         </div>
       </div>
@@ -364,18 +571,21 @@ class HAMenuC3Panel extends HTMLElement {
         <button class="btn" data-op="move-down">↓ Descendre</button>
         <button class="btn danger" data-op="delete">Supprimer</button>
       </div>`;
+    this.localize(host);
     const select = host.querySelector('[data-edit="preset"]');
-    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
+    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "cover.stop_cover", "fan.toggle", "fan.turn_on", "fan.turn_off", "media_player.media_play_pause", "media_player.media_next_track", "media_player.media_previous_track", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
   }
 
   refreshControlOptions() {
     const host = this.shadowRoot.querySelector("#control-options");
-    if (host && this.selected) host.innerHTML =
-      this.renderControlOptions(this.selected, this.isFolder(this.selected));
+    if (host && this.selected) {
+      host.innerHTML = this.renderControlOptions(this.selected, this.isFolder(this.selected));
+      this.localize(host);
+    }
   }
 
   renderControlOptions(item, folder) {
-    if (folder) return "";
+    if (folder || (item.kind || "action") !== "action") return "";
     const entityId = (item.entity_id || "").trim();
     const domain = entityId.split(".")[0];
     const live = this._hass?.states?.[entityId];
@@ -396,10 +606,27 @@ class HAMenuC3Panel extends HTMLElement {
         ["humidity", "Humidité cible", !!live],
         ["humidifier_mode", "Mode", !!(features & 1) && (attrs.available_modes || []).length > 0],
       ],
+      cover: [
+        ["cover_position", "Position (0–100 %)", !!(features & 4)],
+        ["cover_open", "Ouvrir", !!(features & 1)],
+        ["cover_stop", "Arrêter", !!(features & 8)],
+        ["cover_close", "Fermer", !!(features & 2)],
+      ],
+      fan: [
+        ["fan_percentage", "Vitesse (0–100 %)", !!(features & 1)],
+        ["fan_oscillate", "Oscillation", !!(features & 2)],
+        ["fan_direction", "Direction", !!(features & 4)],
+      ],
+      media_player: [
+        ["media_volume", "Volume (0–100 %)", !!(features & 4)],
+        ["media_toggle", "Lecture / pause", !!(features & (1 | 16384))],
+        ["media_next", "Morceau suivant", !!(features & 32)],
+        ["media_previous", "Morceau précédent", !!(features & 16)],
+      ],
     }[domain] || [];
     if (!options.length) return `<div class="section"><div class="field">
       <label>Réglages par appui long</label>
-      <p class="hint">Sélectionne une lampe, un thermostat ou un humidificateur pour régler ses paramètres depuis l'OLED.</p>
+      <p class="hint">Choisis une lampe, un volet, un ventilateur, un lecteur multimédia, un thermostat ou un humidificateur.</p>
     </div></div>`;
     return `<div class="section"><div class="field"><label>Réglages par appui long</label>
       <p class="hint">Coche les fonctions voulues et clique sur « Appliquer les réglages ». Le clic court garde l'action ci-dessus.</p>
@@ -439,12 +666,70 @@ class HAMenuC3Panel extends HTMLElement {
   renderSettings() {
     const host = this.shadowRoot.querySelector("#settings");
     if (!host || !this.status) return;
-    const seconds = this.status.config.settings?.sleep_seconds ?? 30;
-    host.innerHTML = `<div class="field" style="max-width:340px">
-      <label>Veille écran et LED (secondes)</label>
-      <input type="number" min="0" max="3600" step="1" data-setting="sleep_seconds" value="${esc(seconds)}">
-      <div class="hint">0 : toujours allumés. La LED retrouve sa couleur au réveil.</div>
-    </div>`;
+    const settings = this.status.config.settings || {};
+    const checked = (key, fallback=false) => (settings[key] ?? fallback) ? "checked" : "";
+    const gestures = ["double", "triple", "hold"];
+    const names = ["Double clic", "Triple clic", "Maintien prolongé (1,8 s)"];
+    const shortcuts = this.status.config.shortcuts || {};
+    const shortcutEditor = gestures.map((gesture, i) => {
+      const action = shortcuts[gesture] || {service:"", entity_id:"", data:{}};
+      return `<div class="section">
+        <h3>${names[i]}</h3>
+        <div class="form-grid">
+          <div class="field"><label>Service Home Assistant</label>
+            <input data-shortcut="${gesture}" data-shortcut-key="service" placeholder="light.toggle" value="${esc(action.service)}">
+          </div>
+          <div class="field"><label>Entité</label>
+            <input data-shortcut="${gesture}" data-shortcut-key="entity_id" placeholder="light.salon" value="${esc(action.entity_id)}">
+          </div>
+        </div>
+        <div class="field"><label>Données du service (JSON)</label>
+          <textarea data-shortcut="${gesture}" data-shortcut-key="data">${esc(JSON.stringify(action.data || {}, null, 2))}</textarea>
+        </div>
+        <div class="hint">Laisser les champs vides pour désactiver ce raccourci.</div>
+      </div>`;
+    }).join("");
+    host.innerHTML = `
+      <div class="form-grid">
+        <div class="field"><label>Langue / Language</label>
+          <select data-setting="language">
+            <option value="fr" ${settings.language !== "en" ? "selected" : ""}>Français</option>
+            <option value="en" ${settings.language === "en" ? "selected" : ""}>English</option>
+          </select>
+        </div>
+        <div class="field"><label>Taille de police OLED</label>
+          <select data-setting="font_size">
+            <option value="normal" ${settings.font_size !== "small" ? "selected" : ""}>Normale</option>
+            <option value="small" ${settings.font_size === "small" ? "selected" : ""}>Petite</option>
+          </select>
+        </div>
+        <div class="field"><label>Pas de luminosité</label>
+          <select data-setting="brightness_step">
+            ${[1,5,10].map(n => `<option value="${n}" ${(settings.brightness_step ?? 5) === n ? "selected" : ""}>${n} %</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Contraste OLED (1–100 %)</label>
+          <input type="number" min="1" max="100" data-setting="oled_contrast" value="${esc(settings.oled_contrast ?? 80)}">
+        </div>
+        <div class="field"><label>Veille écran et LED (secondes)</label>
+          <input type="number" min="0" max="3600" data-setting="sleep_seconds" value="${esc(settings.sleep_seconds ?? 30)}">
+        </div>
+        <div class="field"><label>Vitesse d'animation (ms)</label>
+          <input type="number" min="100" max="500" step="10" data-setting="animation_ms" value="${esc(settings.animation_ms ?? 220)}">
+        </div>
+      </div>
+      <div class="control-list">
+        <label class="control-check"><input type="checkbox" data-setting="direct_edit" ${checked("direct_edit")}> Réglage direct au long clic</label>
+        <label class="control-check"><input type="checkbox" data-setting="encoder_inverted" ${checked("encoder_inverted")}> Inverser la rotation</label>
+        <label class="control-check"><input type="checkbox" data-setting="animations" ${checked("animations",true)}> Animations de navigation</label>
+        <label class="control-check"><input type="checkbox" data-setting="offline_cache" ${checked("offline_cache",true)}> Dernier menu disponible hors ligne</label>
+      </div>
+      <div class="section">
+        <h3>Raccourcis de l'encodeur</h3>
+        <p class="hint">Le clic simple conserve son action. Le long clic classique (0,7 s) ouvre le menu ; le maintien prolongé déclenche le raccourci choisi.</p>
+        ${shortcutEditor}
+      </div>`;
+    this.localize(host);
   }
 
   renderDiagnostics() {
@@ -477,6 +762,7 @@ class HAMenuC3Panel extends HTMLElement {
       `<div class="diagnostic ${val==="—" ? "missing" : ""}"><span class="sub">${esc(key)}</span><strong>${esc(val)}</strong></div>`).join("")}</div>
       ${missing ? `<p class="hint meta">Certaines données manquent. Vérifie les entités de diagnostic ESPHome et flashe le firmware 0.4 pour la remontée directe.</p>` : ""}
       ${this.status.error ? `<p class="notice error">${esc(this.status.error)}</p>` : ""}`;
+    this.localize(host);
   }
 
   renderLed() {
@@ -509,7 +795,7 @@ class HAMenuC3Panel extends HTMLElement {
     if (this.items.length >= 32) return this.show("Le firmware accepte 32 entrées au maximum.", "error");
     const uid = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
     const item = {id:uid, label: folder ? "Nouveau sous-menu" : "Nouvelle action", parent,
-      service:"", entity_id:"", data:{}, controls:{}};
+      service:"", entity_id:"", data:{}, controls:{}, kind:"action", local_command:"", confirm:false};
     this.items.push(item);
     if (parent) {
       const parentItem = this.items.find(i => i.id === parent);
@@ -680,7 +966,7 @@ class HAMenuC3Panel extends HTMLElement {
       if (input) input.value = this.selected.entity_id;
       const domain = this.selected.entity_id.split(".")[0];
       this.selected.controls = Object.fromEntries(Object.entries(this.selected.controls || {})
-        .filter(([key]) => ({light:["brightness","color_temp","color"],climate:["temperature","hvac_mode"],humidifier:["humidity","humidifier_mode"]}[domain] || []).includes(key)));
+        .filter(([key]) => ({light:["brightness","color_temp","color"],climate:["temperature","hvac_mode"],humidifier:["humidity","humidifier_mode"],cover:["cover_position","cover_open","cover_stop","cover_close"],fan:["fan_percentage","fan_oscillate","fan_direction"],media_player:["media_volume","media_toggle","media_next","media_previous"]}[domain] || []).includes(key)));
       this.renderEditor();
       return;
     }
@@ -716,6 +1002,21 @@ class HAMenuC3Panel extends HTMLElement {
 
   commitEditor() {
     const item=this.selected;
+    const shortcuts=this.shadowRoot.querySelectorAll?.('textarea[data-shortcut-key="data"]') || [];
+    for (const textarea of shortcuts) {
+      const gesture = textarea.dataset.shortcut;
+      this.status.config.shortcuts ||= {};
+      this.status.config.shortcuts[gesture] ||= {service:"", entity_id:"", data:{}};
+      try {
+        const data = JSON.parse(textarea.value.trim() || "{}");
+        if (!data || Array.isArray(data) || typeof data !== "object")
+          throw new Error("JSON object required");
+        this.status.config.shortcuts[gesture].data = data;
+      } catch (err) {
+        this.show("JSON invalide pour le raccourci " + gesture + ": " + err.message, "error");
+        return false;
+      }
+    }
     const textarea=this.shadowRoot.querySelector('textarea[data-edit="data"]');
     if(!item || !textarea || textarea.disabled) {this.editJsonError="";return true;}
     try {
@@ -732,6 +1033,20 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onInput(event) {
+    if (event.target.dataset.confirm && this.selected) {
+      this.selected.confirm = event.target.checked;
+      return;
+    }
+    if (event.target.dataset.shortcut && this.status) {
+      const {shortcut, shortcutKey} = event.target.dataset;
+      this.status.config.shortcuts ||= {};
+      this.status.config.shortcuts[shortcut] ||= {service:"", entity_id:"", data:{}};
+      if (shortcutKey === "data") {
+        try { this.status.config.shortcuts[shortcut].data = JSON.parse(event.target.value || "{}"); }
+        catch (_) {}
+      } else this.status.config.shortcuts[shortcut][shortcutKey] = event.target.value;
+      return;
+    }
     if (event.target.dataset.control && this.selected) {
       this.setControl(event.target.dataset.control, event.target.checked);
       return;
@@ -739,11 +1054,11 @@ class HAMenuC3Panel extends HTMLElement {
     if (event.target.dataset.entitySearch) this.renderEntityResults(event.target.value);
     const setting = event.target.dataset.setting;
     if (setting && this.status) {
-      const value = Number(event.target.value);
-      if (Number.isInteger(value) && value >= 0 && value <= 3600) {
-        this.status.config.settings ||= {};
-        this.status.config.settings[setting] = value;
-      }
+      this.status.config.settings ||= {};
+      const input = event.target;
+      const value = input.type === "checkbox" ? input.checked :
+                    input.type === "number" ? Number(input.value) : input.value;
+      this.status.config.settings[setting] = value;
     }
     const edit=event.target.dataset.edit;
     const item=this.selected;
@@ -768,6 +1083,19 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onChange(event) {
+    if (event.target.dataset.confirm && this.selected) {
+      this.selected.confirm = event.target.checked;
+      return;
+    }
+    if (event.target.dataset.setting) {
+      this.onInput(event);
+      if (event.target.dataset.setting === "language") this.render();
+      return;
+    }
+    if (event.target.dataset.shortcut) {
+      this.onInput(event);
+      return;
+    }
     if (event.target.dataset.control && this.selected) {
       this.setControl(event.target.dataset.control, event.target.checked);
       return;
@@ -780,6 +1108,16 @@ class HAMenuC3Panel extends HTMLElement {
     const item=this.selected;
     if(!item || !edit) return;
     if(edit === "entity_id") { this.refreshControlOptions(); return; }
+    if(edit === "kind") {
+      item.kind = event.target.value;
+      if (item.kind !== "action") { item.service = ""; item.controls = {}; item.data = {}; }
+      if (item.kind === "local") { item.entity_id = ""; item.local_command ||= "identify"; }
+      if (item.kind === "info") item.confirm = false;
+      this.renderTree();
+      this.renderEditor();
+      return;
+    }
+    if(edit === "local_command") { item.local_command = event.target.value; return; }
     if(edit==="preset") {
       if(event.target.value!=="custom") {
         item.service=event.target.value;

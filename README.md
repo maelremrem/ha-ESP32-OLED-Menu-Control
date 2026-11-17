@@ -12,6 +12,25 @@ Home Assistant menu controller for an ESP32-C3 SuperMini, 128×64 SSD1306 OLED, 
 
 Each controller has its **own menu, LED settings and sleep timer**. The device selector switches between them. Existing installations automatically migrate their saved menu from the former single-device storage when the integration first starts after upgrading.
 
+## Version 0.6 — Universal controller
+
+Version **0.6.0** introduces six groups of features plus French/English localization.
+
+1. **Direct controls:** enable *Direct edit on long press* in the settings to start adjusting the first numeric property immediately when a compatible device opens. Other properties are selectable with the encoder. Percent-based values can use steps of 1%, 5%, or 10%.
+2. **More Home Assistant devices:** configurable long-press options for covers (position/open/stop/close), fans (percentage/oscillation/direction), and media players (volume/play-pause/next/previous), in addition to lights, climate and humidifiers. Unsupported operations are hidden based on the entity's supported feature flags.
+3. **Informational entries:** choose *Information only* for an entity to show live state in the menu and a bigger, two-line readout after pressing. A normal action entry can still display an entity's live state.
+4. **Shortcuts:** bind Home Assistant services (plus entity and optional JSON data) to double click, triple click and extended hold. When a multi-click shortcut is configured, single clicks are delayed about 320 ms to distinguish the gesture. Normal 0.7–1.8-second long presses continue to open the control menu; an extended 1.8-second hold triggers its configured shortcut.
+5. **Offline cache and confirmation:** the controller saves the last fully synchronized menu to ESP32 NVS flash (up to 3,800 serialized characters). At boot, a cached menu can be browsed without HA, with an **OFFLINE** heading. Only the explicitly supported local actions (*Identify LED*, *Toggle LED*, *OLED sleep*) run without HA; Home Assistant services and advanced controls require a connection. Enable **Require confirmation** on sensitive actions so the OLED asks for approval before executing them. Menu snapshots are saved only after a successful full sync, not on every entity state update. Very large menus may exceed the cache capacity and remain online-only.
+6. **Display and encoder personalization:** language, font size (normal/small), OLED contrast, navigation animations and speed, encoder direction, direct-edit behavior, and idle sleep are configurable in the HA Menu C3 panel.
+
+### English support
+
+In **Settings & status → Language**, choose **English** (or **Français**), then click **Save**. The OLED's system labels and the configuration panel follow the selected language. The option is stored per controller.
+
+### Upgrade
+
+Update the HACS integration to **0.6.0**, **restart Home Assistant**, and **OTA flash ESPHome 0.6.0** from the existing GitHub package. The new integration and firmware must be updated together because new ESPHome user actions and menu fields are required.
+
 ## Firmware
 
 **Recommended:** use the [minimal local YAML](esphome/example-minimal.yaml). Its package references the [remote ESPHome configuration](esphome/packages/ha-menu-c3.yaml) from GitHub, so the local file only carries the Wi-Fi credentials, API encryption and OTA password.
@@ -55,7 +74,7 @@ Use 3.3 V for OLED/encoder and 5 V for the LED, with a common ground. A logic-le
 
 ## Diagnostics
 
-Open **Réglages et état** in the sidebar panel for Wi-Fi RSSI, SSID, IP, uptime, HA connection and last sync. The panel refreshes automatically every 15 seconds. Firmware **0.5.7** sends diagnostic updates directly on integration heartbeat; it also exposes regular ESPHome entities. Previous firmware may require enabling its diagnostics entities in Home Assistant.
+Open **Réglages et état** in the sidebar panel for Wi-Fi RSSI, SSID, IP, uptime, HA connection and last sync. The panel refreshes automatically every 15 seconds. Firmware **0.6.0** sends diagnostic updates directly on integration heartbeat; it also exposes regular ESPHome entities. Previous firmware may require enabling its diagnostics entities in Home Assistant.
 
 The menu and settings are saved by HA. The ESP32 uses RAM for the menu and restores it from HA when connected. There are up to 32 configurable entries and 8 levels. Each device requires a unique `esphome.name`. Sensitive actions such as locks or garages currently execute without an on-screen confirmation.
 
@@ -66,6 +85,7 @@ python -m unittest discover -s tests -v
 node tests/test_panel_drag.js
 node tests/test_multi_device.js
 node tests/test_panel_controls.js
+node tests/test_panel_v06.js
 node --check custom_components/ha_menu_c3/frontend/ha-menu-panel.js
 ```
 
