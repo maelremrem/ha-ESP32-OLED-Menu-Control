@@ -219,7 +219,7 @@ api:
         status: string
       then:
         - lambda: |-
-            if (slot >= 0 && slot < 32) id(menu_states)[slot] = status.substr(0, 12);
+            if (slot >= 0 && slot < 32) id(menu_states)[slot] = status.substr(0, 48);
 
     - action: set_menu_count
       description: Set the number of active entries (0 to 32)
@@ -277,6 +277,18 @@ api:
         - number.set:
             id: sleep_timeout_number
             value: !lambda 'return static_cast<float>(std::clamp<int32_t>(seconds, 0, 3600));'
+
+    - action: set_shortcut_config
+      description: Configure extra button gestures
+      variables:
+        double: bool
+        triple: bool
+        hold: bool
+      then:
+        - lambda: |-
+            id(shortcut_double) = double;
+            id(shortcut_triple) = triple;
+            id(shortcut_hold) = hold;
 
     - action: set_user_settings
       description: Apply device-local display and input preferences
@@ -568,6 +580,15 @@ globals:
   - id: click_count
     type: int
     initial_value: '0'
+  - id: shortcut_double
+    type: bool
+    initial_value: 'false'
+  - id: shortcut_triple
+    type: bool
+    initial_value: 'false'
+  - id: shortcut_hold
+    type: bool
+    initial_value: 'false'
   - id: sync_wait_started
     type: uint32_t
     initial_value: '0'
@@ -831,6 +852,35 @@ display:
       }
 
       // Action feedback: command sent is not the same as physical state confirmed.
+      if (id(info_slot) >= 0 && id(info_slot) < id(menu_length)) {
+        const int slot = id(info_slot);
+        it.print(2, 0, id(title_font), id(menu_labels)[slot].substr(0, 18).c_str());
+        it.line(0, 13, 127, 13);
+        std::string state = id(menu_states)[slot];
+        if (state.empty()) state = id(ui_language) == "en" ? "No data" : "Aucune info";
+        it.print(64, 27, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER,
+                 state.substr(0, 20).c_str());
+        if (state.size() > 20)
+          it.print(64, 39, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                   state.substr(20, 20).c_str());
+        it.print(2, 52, id(title_font), id(ui_language) == "en" ? "< Back" : "< Retour");
+        return;
+      }
+      if (id(confirm_slot) >= 0 && id(confirm_slot) < id(menu_length)) {
+        it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER,
+                 id(ui_language) == "en" ? "CONFIRM ACTION" : "CONFIRMER ACTION");
+        it.line(0, 13, 127, 13);
+        it.print(64, 20, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER,
+                 id(menu_labels)[id(confirm_slot)].substr(0, 19).c_str());
+        const char *labels[2] = {id(ui_language) == "en" ? "Cancel" : "Annuler",
+                                  id(ui_language) == "en" ? "Yes" : "Oui"};
+        for (int n = 0; n < 2; ++n) {
+          const int y = 36 + n * 13;
+          if (n == id(confirm_cursor)) it.filled_rectangle(0, y, 124, 12, COLOR_ON);
+          it.print(6, y, id(menu_font), n == id(confirm_cursor) ? COLOR_OFF : COLOR_ON, labels[n]);
+        }
+        return;
+      }
       if (id(feedback_mode) != 0) {
         const int mode = id(feedback_mode);
         if (mode == 1) {
@@ -1361,6 +1411,8 @@ script:
             id(feedback_mode) = 0;
             return;
           }
+          if (id(info_slot) >= 0) { id(info_slot) = -1; return; }
+          if (id(confirm_slot) >= 0) { id(confirm_slot) = -1; return; }
           if (id(control_loading) || id(control_open)) {
             id(control_loading) = false;
             id(control_open) = false;
