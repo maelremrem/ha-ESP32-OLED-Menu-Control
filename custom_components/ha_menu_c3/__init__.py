@@ -540,7 +540,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             frontend_url_path=PANEL_URL,
             sidebar_title="HA Menu C3",
             sidebar_icon="mdi:gesture-tap-button",
-            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=7",
+            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=8",
             require_admin=True,
         )
         hass.data[f"{DOMAIN}_panel_registered"] = True
