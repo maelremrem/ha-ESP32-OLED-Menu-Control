@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.7"
+  fw_version: "0.6.0"
 
 esphome:
   name: ${device_name}
@@ -48,12 +48,18 @@ api:
         item_id: string
         parent_id: string
         label: string
+        kind: string
+        local_command: string
+        confirm: bool
       then:
         - lambda: |-
             if (slot < 0 || slot >= 32 || item_id.empty() || label.empty()) return;
             id(menu_ids)[slot] = item_id.substr(0, 40);
             id(menu_parents)[slot] = parent_id.substr(0, 40);
             id(menu_labels)[slot] = label.substr(0, 64);
+            id(menu_kinds)[slot] = kind == "info" || kind == "local" ? kind : "action";
+            id(menu_local_commands)[slot] = local_command.substr(0, 24);
+            id(menu_confirm)[slot] = confirm ? 1 : 0;
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
@@ -67,7 +73,7 @@ api:
       then:
         - lambda: |-
             if (slot >= 0 && slot < 32)
-              id(menu_control_flags)[slot] = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
+              id(menu_control_flags)[slot] = static_cast<int>(std::clamp<int32_t>(flags, 0, 262143));
 
     - action: open_controls
       description: Open a native device control screen
@@ -90,6 +96,11 @@ api:
         modes: string
         current_mode: string
         temp_unit: string
+        cover_position: int
+        fan_percentage: int
+        fan_oscillating: int
+        fan_direction: string
+        media_volume: int
       then:
         - lambda: |-
             if (slot < 0 || slot >= id(menu_length) || slot != id(control_slot)) return;
@@ -99,10 +110,20 @@ api:
             id(control_cursor) = 0;
             id(ctrl_fields).clear();
             id(ctrl_modes).clear();
-            id(ctrl_flags) = static_cast<int>(std::clamp<int32_t>(flags, 0, 127));
-            for (int bit : {1, 2, 4, 8, 16, 32, 64})
+            id(ctrl_flags) = static_cast<int>(std::clamp<int32_t>(flags, 0, 262143));
+            for (int bit : {1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
+                            1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072})
               if (id(ctrl_flags) & bit) id(ctrl_fields).push_back(bit);
             id(ctrl_brightness) = std::clamp<int32_t>(brightness, 0, 255);
+            id(ctrl_cover_position) = std::clamp<int32_t>(cover_position, 0, 100);
+            id(ctrl_fan_percentage) = std::clamp<int32_t>(fan_percentage, 0, 100);
+            id(ctrl_fan_oscillating) = fan_oscillating != 0;
+            id(ctrl_fan_direction) = fan_direction == "reverse" ? "reverse" : "forward";
+            id(ctrl_media_volume) = std::clamp<int32_t>(media_volume, 0, 100);
+            if (id(ui_direct_edit) && !id(ctrl_fields).empty()) {
+              id(control_cursor) = 1;
+              id(control_editing) = true;
+            }
             id(ctrl_min_kelvin) = std::max(1000, (int)min_kelvin);
             id(ctrl_max_kelvin) = std::max(id(ctrl_min_kelvin), (int)max_kelvin);
             id(ctrl_kelvin) = std::clamp((int)kelvin, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
@@ -205,6 +226,29 @@ api:
             id: sleep_timeout_number
             value: !lambda 'return static_cast<float>(std::clamp<int32_t>(seconds, 0, 3600));'
 
+    - action: set_user_settings
+      description: Apply device-local display and input preferences
+      variables:
+        language: string
+        font_size: string
+        direct_edit: bool
+        brightness_step: int
+        encoder_inverted: bool
+        animations: bool
+        oled_contrast: int
+        offline_cache: bool
+      then:
+        - lambda: |-
+            id(ui_language) = language == "en" ? "en" : "fr";
+            id(ui_font_size) = font_size == "small" ? "small" : "normal";
+            id(ui_direct_edit) = direct_edit;
+            id(ui_brightness_step) = brightness_step == 1 || brightness_step == 10 ? brightness_step : 5;
+            id(ui_encoder_inverted) = encoder_inverted;
+            id(ui_animations) = animations;
+            id(ui_contrast) = std::clamp<int32_t>(oled_contrast, 1, 100);
+            id(ui_offline_cache) = offline_cache;
+            id(oled).set_contrast(id(ui_contrast) / 100.0f);
+
     - action: set_extension_status
       description: Report the latest integration synchronization time
       variables:
@@ -296,6 +340,24 @@ globals:
   - id: menu_control_flags
     type: std::vector<int>
     initial_value: 'std::vector<int>(32, 0)'
+  - id: menu_kinds
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(32, "action")'
+  - id: menu_local_commands
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(32)'
+  - id: menu_confirm
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(32, 0)'
+  - id: info_slot
+    type: int
+    initial_value: '-1'
+  - id: confirm_slot
+    type: int
+    initial_value: '-1'
+  - id: confirm_cursor
+    type: int
+    initial_value: '0'
   - id: control_slot
     type: int
     initial_value: '-1'
@@ -329,6 +391,21 @@ globals:
   - id: ctrl_brightness
     type: int
     initial_value: '128'
+  - id: ctrl_cover_position
+    type: int
+    initial_value: '0'
+  - id: ctrl_fan_percentage
+    type: int
+    initial_value: '0'
+  - id: ctrl_fan_oscillating
+    type: bool
+    initial_value: 'false'
+  - id: ctrl_fan_direction
+    type: std::string
+    initial_value: '"forward"'
+  - id: ctrl_media_volume
+    type: int
+    initial_value: '50'
   - id: ctrl_kelvin
     type: int
     initial_value: '3000'
@@ -380,6 +457,33 @@ globals:
   - id: menu_synced
     type: bool
     initial_value: 'false'
+  - id: ui_language
+    type: std::string
+    initial_value: '"fr"'
+  - id: ui_font_size
+    type: std::string
+    initial_value: '"normal"'
+  - id: ui_direct_edit
+    type: bool
+    initial_value: 'false'
+  - id: ui_brightness_step
+    type: int
+    initial_value: '5'
+  - id: ui_encoder_inverted
+    type: bool
+    initial_value: 'false'
+  - id: ui_animations
+    type: bool
+    initial_value: 'true'
+  - id: ui_contrast
+    type: int
+    initial_value: '80'
+  - id: ui_offline_cache
+    type: bool
+    initial_value: 'true'
+  - id: click_count
+    type: int
+    initial_value: '0'
   - id: sync_wait_started
     type: uint32_t
     initial_value: '0'
