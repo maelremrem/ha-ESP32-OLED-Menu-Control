@@ -281,14 +281,14 @@ api:
     - action: set_shortcut_config
       description: Configure extra button gestures
       variables:
-        double: bool
-        triple: bool
-        hold: bool
+        double_enabled: bool
+        triple_enabled: bool
+        hold_enabled: bool
       then:
         - lambda: |-
-            id(shortcut_double) = double;
-            id(shortcut_triple) = triple;
-            id(shortcut_hold) = hold;
+            id(shortcut_double) = double_enabled;
+            id(shortcut_triple) = triple_enabled;
+            id(shortcut_hold) = hold_enabled;
 
     - action: set_user_settings
       description: Apply device-local display and input preferences
