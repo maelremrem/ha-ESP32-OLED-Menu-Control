@@ -114,8 +114,13 @@ api:
             id(ctrl_fan_direction) = fan_direction == "reverse" ? "reverse" : "forward";
             id(ctrl_media_volume) = std::clamp<int32_t>(media_volume, 0, 100);
             if (id(ui_direct_edit) && !id(ctrl_fields).empty()) {
-              id(control_cursor) = 1;
-              id(control_editing) = true;
+              const int first = id(ctrl_fields)[0];
+              if (first == 1 || first == 2 || first == 4 || first == 8 ||
+                  first == 16 || first == 32 || first == 64 || first == 128 ||
+                  first == 2048 || first == 16384) {
+                id(control_cursor) = 1;
+                id(control_editing) = true;
+              }
             }
             id(ctrl_min_kelvin) = std::max(1000, (int)min_kelvin);
             id(ctrl_max_kelvin) = std::max(id(ctrl_min_kelvin), (int)max_kelvin);
@@ -1011,6 +1016,7 @@ script:
     then:
       - lambda: |-
           if (!id(menu_synced)) return;
+          const int delta = id(ui_encoder_inverted) ? -direction : direction;
           const uint32_t now = millis();
           // Guard against mechanical bounce; tune encoder_debounce_ms.
           if ((uint32_t)(now - id(last_encoder_step)) < ${encoder_debounce_ms}) return;
@@ -1032,7 +1038,7 @@ script:
           if (id(control_open)) {
             if (!id(control_editing)) {
               const int total = (int)id(ctrl_fields).size() + 1;
-              id(control_cursor) = (id(control_cursor) + direction + total) % total;
+              id(control_cursor) = (id(control_cursor) + delta + total) % total;
               return;
             }
             if (id(control_cursor) == 0 || id(control_cursor) > (int)id(ctrl_fields).size()) return;
@@ -1043,26 +1049,35 @@ script:
               case 1:
                 {
                   const int percent = (id(ctrl_brightness) * 100 + 127) / 255;
-                  const int next_percent = std::clamp(percent + direction * 5, 0, 100);
+                  const int next_percent = std::clamp(percent + delta * id(ui_brightness_step), 0, 100);
                   id(ctrl_brightness) = (next_percent * 255 + 50) / 100;
                 }
                 id(ctrl_field) = "brightness"; current = id(ctrl_brightness); break;
               case 2:
-                id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + direction * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
+                id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + delta * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
                 id(ctrl_field) = "color_temp"; current = id(ctrl_kelvin); break;
               case 4:
-                id(ctrl_hue) = (id(ctrl_hue) + direction * 15 + 360) % 360;
+                id(ctrl_hue) = (id(ctrl_hue) + delta * 15 + 360) % 360;
                 id(ctrl_field) = "color"; current = id(ctrl_hue); break;
               case 8:
-                id(ctrl_temp) = std::clamp(id(ctrl_temp) + direction * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
+                id(ctrl_temp) = std::clamp(id(ctrl_temp) + delta * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
                 id(ctrl_field) = "temperature"; current = id(ctrl_temp); break;
               case 32:
-                id(ctrl_humidity) = std::clamp(id(ctrl_humidity) + direction * id(ctrl_humidity_step), id(ctrl_min_humidity), id(ctrl_max_humidity));
+                id(ctrl_humidity) = std::clamp(id(ctrl_humidity) + delta * id(ctrl_humidity_step), id(ctrl_min_humidity), id(ctrl_max_humidity));
                 id(ctrl_field) = "humidity"; current = id(ctrl_humidity); break;
+              case 128:
+                id(ctrl_cover_position) = std::clamp(id(ctrl_cover_position) + delta * id(ui_brightness_step), 0, 100);
+                id(ctrl_field) = "cover_position"; current = id(ctrl_cover_position); break;
+              case 2048:
+                id(ctrl_fan_percentage) = std::clamp(id(ctrl_fan_percentage) + delta * id(ui_brightness_step), 0, 100);
+                id(ctrl_field) = "fan_percentage"; current = id(ctrl_fan_percentage); break;
+              case 16384:
+                id(ctrl_media_volume) = std::clamp(id(ctrl_media_volume) + delta * id(ui_brightness_step), 0, 100);
+                id(ctrl_field) = "media_volume"; current = id(ctrl_media_volume); break;
               case 16:
               case 64:
                 if (id(ctrl_modes).empty()) return;
-                id(ctrl_mode_index) = (id(ctrl_mode_index) + direction + (int)id(ctrl_modes).size()) % (int)id(ctrl_modes).size();
+                id(ctrl_mode_index) = (id(ctrl_mode_index) + delta + (int)id(ctrl_modes).size()) % (int)id(ctrl_modes).size();
                 id(ctrl_field) = field == 16 ? "hvac_mode" : "humidifier_mode";
                 id(ctrl_value) = id(ctrl_modes)[id(ctrl_mode_index)];
                 id(send_adjust).execute(id(menu_ids)[id(control_slot)], id(ctrl_field), id(ctrl_value));
@@ -1081,7 +1096,7 @@ script:
             }
           }
           if (children > 0) {
-            id(cursor) = (id(cursor) + direction + children) % children;
+            id(cursor) = (id(cursor) + delta + children) % children;
           } else {
             id(cursor) = 0;
           }
@@ -1166,6 +1181,32 @@ script:
               id(control_open) = false;
               id(control_editing) = false;
               return;
+            }
+            if (!id(control_editing) && id(control_cursor) > 0 &&
+                id(control_cursor) <= (int)id(ctrl_fields).size()) {
+              const int field = id(ctrl_fields)[id(control_cursor) - 1];
+              const int slot = id(control_slot);
+              if (slot >= 0 && slot < id(menu_length)) {
+                std::string key, value = "1";
+                switch (field) {
+                  case 256: key = "cover_open"; break;
+                  case 512: key = "cover_stop"; break;
+                  case 1024: key = "cover_close"; break;
+                  case 4096:
+                    id(ctrl_fan_oscillating) = !id(ctrl_fan_oscillating);
+                    key = "fan_oscillate"; value = id(ctrl_fan_oscillating) ? "1" : "0"; break;
+                  case 8192:
+                    id(ctrl_fan_direction) = id(ctrl_fan_direction) == "forward" ? "reverse" : "forward";
+                    key = "fan_direction"; value = id(ctrl_fan_direction); break;
+                  case 32768: key = "media_toggle"; break;
+                  case 65536: key = "media_next"; break;
+                  case 131072: key = "media_previous"; break;
+                }
+                if (!key.empty()) {
+                  id(send_adjust).execute(id(menu_ids)[slot], key, value);
+                  return;
+                }
+              }
             }
             id(control_editing) = !id(control_editing);
             return;
