@@ -819,20 +819,20 @@ display:
           const char *reason = nullptr;
           const char *hint = nullptr;
           if (!id(wifi_node).is_connected()) {
-            reason = "Wi-Fi indisponible";
-            hint = "Verifier le reseau";
+            reason = id(ui_language) == "en" ? "Wi-Fi unavailable" : "Wi-Fi indisponible";
+            hint = id(ui_language) == "en" ? "Check network" : "Verifier le reseau";
           } else if (!id(native_api).is_connected_with_state_subscription()) {
-            reason = "HA non connecte";
-            hint = "Verifier ESPHome";
+            reason = id(ui_language) == "en" ? "HA offline" : "HA non connecte";
+            hint = id(ui_language) == "en" ? "Check ESPHome" : "Verifier ESPHome";
           } else if (id(last_extension_seen) == 0 ||
                      (uint32_t)(now - id(last_extension_seen)) >= 90000U) {
-            reason = "Integration absente";
-            hint = "Verifier HA Menu C3";
+            reason = id(ui_language) == "en" ? "Integration missing" : "Integration absente";
+            hint = id(ui_language) == "en" ? "Check HA Menu C3" : "Verifier HA Menu C3";
           } else {
-            reason = "Menu non recu";
-            hint = "Synchronisation HA";
+            reason = id(ui_language) == "en" ? "Menu not received" : "Menu non recu";
+            hint = id(ui_language) == "en" ? "Check HA sync" : "Synchronisation HA";
           }
-          it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "ERREUR DE CONNEXION");
+          it.print(64, 0, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "CONNECTION ERROR" : "ERREUR DE CONNEXION");
           it.circle(64, 22, 12, COLOR_ON);
           it.line(59, 17, 69, 27, COLOR_ON);
           it.line(69, 17, 59, 27, COLOR_ON);
@@ -840,7 +840,7 @@ display:
           it.print(64, 51, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER, hint);
           return;
         }
-        it.print(64, 2, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "CONNEXION");
+        it.print(64, 2, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "CONNECTING" : "CONNEXION");
         const int8_t dx[8] = {0, 7, 10, 7, 0, -7, -10, -7};
         const int8_t dy[8] = {-10, -7, 0, 7, 10, 7, 0, -7};
         const int head = static_cast<int>((now / 120U) % 8U);
@@ -852,7 +852,7 @@ display:
                               26 + dy[i] - size / 2,
                               size, size, COLOR_ON);
         }
-        it.print(64, 43, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "En attente de");
+        it.print(64, 43, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "Waiting for" : "En attente de");
         it.print(64, 54, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "Home Assistant");
         return;
       }
@@ -890,9 +890,9 @@ display:
       if (id(feedback_mode) != 0) {
         const int mode = id(feedback_mode);
         if (mode == 1) {
-          it.print(3, 2, id(title_font), "EN COURS");
+          it.print(3, 2, id(title_font), id(ui_language) == "en" ? "WORKING" : "EN COURS");
           it.line(0, 14, 127, 14);
-          it.print(4, 24, id(menu_font), "Commande envoyee...");
+          it.print(4, 24, id(menu_font), id(ui_language) == "en" ? "Command sent..." : "Commande envoyee...");
           it.filled_rectangle((now / 9U) % 118U, 47, 10, 3);
         } else {
           const bool ok = mode == 2;
@@ -910,7 +910,7 @@ display:
           if (ok) {
             stroke(56, 17, 62, 23, 160);
             stroke(62, 23, 74, 10, 340);
-            it.print(64, 32, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "TERMINE");
+            it.print(64, 32, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "DONE" : "TERMINE");
             if (!id(feedback_item).empty())
               it.print(64, 44, id(footer_font), COLOR_ON, TextAlign::TOP_CENTER,
                        id(feedback_item).substr(0, 22).c_str());
@@ -939,9 +939,9 @@ display:
       }
 
       if (id(control_loading)) {
-        it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, "REGLAGES");
+        it.print(64, 5, id(title_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "SETTINGS" : "REGLAGES");
         it.line(0, 15, 127, 15);
-        it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, "Chargement...");
+        it.print(64, 29, id(menu_font), COLOR_ON, TextAlign::TOP_CENTER, id(ui_language) == "en" ? "Loading..." : "Chargement...");
         it.filled_rectangle(16 + ((now / 12U) % 86U), 47, 12, 3);
         return;
       }
