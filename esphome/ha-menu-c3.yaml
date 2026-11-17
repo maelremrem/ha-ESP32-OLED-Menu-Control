@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.6.0"
+  fw_version: "0.6.1"
 
 esphome:
   name: ${device_name}
@@ -16,9 +16,18 @@ esphome:
           id(menu_cached) = false;
           id(sync_wait_started) = millis();
           id(last_input) = millis();
-          // Restore the last confirmed menu, never an incomplete transfer.
-          if (!id(cached_menu_blob).empty()) {
-            const std::string blob = id(cached_menu_blob);
+          // Restore only complete, checksum-verified menu snapshots.
+          const std::string *chunks[] = {&id(cached_menu_chunk_00), &id(cached_menu_chunk_01), &id(cached_menu_chunk_02), &id(cached_menu_chunk_03), &id(cached_menu_chunk_04), &id(cached_menu_chunk_05), &id(cached_menu_chunk_06), &id(cached_menu_chunk_07), &id(cached_menu_chunk_08), &id(cached_menu_chunk_09), &id(cached_menu_chunk_10), &id(cached_menu_chunk_11), &id(cached_menu_chunk_12), &id(cached_menu_chunk_13), &id(cached_menu_chunk_14), &id(cached_menu_chunk_15)};
+          std::string blob;
+          blob.reserve(3800);
+          for (const auto *chunk : chunks) blob += *chunk;
+          uint32_t crc = 2166136261U;
+          for (unsigned char ch : blob) {
+            crc ^= ch;
+            crc *= 16777619U;
+          }
+          if (!blob.empty() && id(cached_menu_checksum) != 0 &&
+              crc == id(cached_menu_checksum)) {
             size_t at = 0;
             auto take = [&](std::string &out) -> bool {
               const size_t colon = blob.find(':', at);
@@ -37,7 +46,7 @@ esphome:
             std::string token;
             bool ok = take(token) && token == "HA6" && take(token);
             int count = ok ? std::atoi(token.c_str()) : 0;
-            if (count < 1 || count > 32) ok = false;
+            if (count < 0 || count > 32) ok = false;
             for (int i = 0; ok && i < count; ++i) {
               std::string id_value, label, parent, state, kind, command, flags, confirm;
               ok = take(id_value) && take(label) && take(parent) && take(state) &&
@@ -326,6 +335,26 @@ api:
             // Final commit: all menu data and options have been sent by HA.
             id(menu_synced) = true;
             id(menu_cached) = false;
+            // Each restored ESPHome string is limited to 254 bytes.
+            // Store a maximum 3,800-byte snapshot in 16 x 240-byte segments.
+            std::string *chunks[] = {&id(cached_menu_chunk_00), &id(cached_menu_chunk_01), &id(cached_menu_chunk_02), &id(cached_menu_chunk_03), &id(cached_menu_chunk_04), &id(cached_menu_chunk_05), &id(cached_menu_chunk_06), &id(cached_menu_chunk_07), &id(cached_menu_chunk_08), &id(cached_menu_chunk_09), &id(cached_menu_chunk_10), &id(cached_menu_chunk_11), &id(cached_menu_chunk_12), &id(cached_menu_chunk_13), &id(cached_menu_chunk_14), &id(cached_menu_chunk_15)};
+            auto save_snapshot = [&](const std::string &data) {
+              uint32_t checksum = 0;
+              if (!data.empty()) {
+                checksum = 2166136261U;
+                for (unsigned char ch : data) {
+                  checksum ^= ch;
+                  checksum *= 16777619U;
+                }
+              }
+              for (size_t i = 0; i < 16; ++i) {
+                const size_t offset = i * 240U;
+                const std::string part = offset < data.size() ? data.substr(offset, 240) : "";
+                if (*chunks[i] != part) *chunks[i] = part;
+              }
+              if (id(cached_menu_checksum) != checksum)
+                id(cached_menu_checksum) = checksum;
+            };
             if (id(ui_offline_cache)) {
               std::string cached;
               auto add = [&](const std::string &s) {
@@ -343,11 +372,10 @@ api:
                 add(std::to_string(id(menu_control_flags)[i]));
                 add(std::to_string(id(menu_confirm)[i]));
               }
-              // NVS-backed string; avoid partial writes for very large menus.
-              if (cached.size() <= 3800 && cached != id(cached_menu_blob))
-                id(cached_menu_blob) = cached;
+              // Oversized snapshots must not leave a stale cached menu.
+              save_snapshot(cached.size() <= 3800U ? cached : std::string());
             } else {
-              id(cached_menu_blob) = "";
+              save_snapshot("");
             }
 
     - action: extension_heartbeat
@@ -555,10 +583,89 @@ globals:
   - id: menu_cached
     type: bool
     initial_value: 'false'
-  - id: cached_menu_blob
+  - id: cached_menu_checksum
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: cached_menu_chunk_00
     type: std::string
     restore_value: yes
-    max_restore_data_length: 3800
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_01
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_02
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_03
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_04
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_05
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_06
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_07
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_08
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_09
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_10
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_11
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_12
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_13
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_14
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
+    initial_value: '""'
+  - id: cached_menu_chunk_15
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 240
     initial_value: '""'
   - id: ui_language
     type: std::string
