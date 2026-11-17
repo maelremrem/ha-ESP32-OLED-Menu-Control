@@ -30,6 +30,7 @@ from .const import (
 )
 from .model import DEFAULT_CONFIG, MenuValidationError, validate_config
 from .controls import adjustment, attributes_payload
+from .realtime import LatestAdjustmentQueue
 
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
@@ -56,6 +57,7 @@ class MenuManager:
         self.reported_at = None
         self.config = validate_config(DEFAULT_CONFIG)
         self.sync_lock = asyncio.Lock()
+        self.adjustments = LatestAdjustmentQueue(hass.async_create_task, self.apply_control)
         self.last_sync = "not_synced"
         self.last_error = ""
         self.last_sync_at = None
@@ -359,10 +361,9 @@ class MenuManager:
             request = adjustment(item, state, field, value)
             if not self.hass.services.has_service(request.domain, request.service):
                 raise ValueError("Commande indisponible")
-            # Every encoder detent sends a request. Do not await physical state
-            # convergence: state_changed events report the actual value later.
+            # Serialize service completion so older brightness values cannot overtake newer ones.
             await self.hass.services.async_call(
-                request.domain, request.service, request.data, blocking=False,
+                request.domain, request.service, request.data, blocking=True,
             )
         except Exception as err:
             _LOGGER.warning("Control %s/%s rejected: %s", item_id, field, err)
@@ -384,7 +385,7 @@ class MenuManager:
         field = event.data.get("field")
         value = event.data.get("value")
         if isinstance(item_id, str) and isinstance(field, str) and isinstance(value, str):
-            self.hass.async_create_task(self.apply_control(item_id, field, value))
+            self.adjustments.push(item_id, field, value)
 
     @callback
     def on_ready(self, event) -> None:
@@ -570,7 +571,9 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     entry.async_unload()
     managers = hass.data.get(DOMAIN, {})
-    managers.pop(entry.entry_id, None)
+    manager = managers.pop(entry.entry_id, None)
+    if manager is not None:
+        manager.adjustments.close()
     if not managers:
         hass.data.pop(DOMAIN, None)
         frontend.async_remove_panel(hass, PANEL_URL)
