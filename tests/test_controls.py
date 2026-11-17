@@ -24,8 +24,12 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(immediate.data, {
             "entity_id": "light.salon", "brightness": 170, "transition": 0,
         })
-        self.assertEqual(adjustment(item,value,"color_temp","2000").data["color_temp_kelvin"],2700)
-        self.assertEqual(adjustment(item,value,"color","45").data["hs_color"],[45,100])
+        white = adjustment(item,value,"color_temp","2000")
+        self.assertEqual(white.data["color_temp_kelvin"], 2700)
+        self.assertEqual(white.data["transition"], 0)
+        color = adjustment(item,value,"color","45")
+        self.assertEqual(color.data["hs_color"], [45,100])
+        self.assertEqual(color.data["transition"], 0)
 
     def test_non_rgb_light(self):
         item={"entity_id":"light.salon","controls":{"color":True,"brightness":True}}
