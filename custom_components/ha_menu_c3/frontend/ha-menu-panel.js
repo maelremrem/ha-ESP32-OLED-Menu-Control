@@ -6,6 +6,124 @@ const clone = (obj) => JSON.parse(JSON.stringify(obj));
 const rgbHex = (rgb) => "#" + rgb.map((n) => n.toString(16).padStart(2, "0")).join("");
 const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
+const EN_TRANSLATIONS = {
+  "Menus, actions et LED": "Menus, actions and LED",
+  "Appareil": "Device",
+  "Synchronisé": "Synced",
+  "Hors ligne": "Offline",
+  "Non synchronisé": "Not synced",
+  "Identifier": "Identify",
+  "Synchroniser": "Sync",
+  "Enregistrer": "Save",
+  "Menus": "Menus",
+  "Réglages et état": "Settings & status",
+  "Arborescence": "Menu tree",
+  "Éditeur d'entrée": "Entry editor",
+  "LED RGB permanente": "Persistent RGB LED",
+  "Réglages": "Settings",
+  "État de l'appareil": "Device status",
+  "Actualiser": "Refresh",
+  "+ Entrée": "+ Entry",
+  "+ Sous-menu": "+ Submenu",
+  "Menu parent": "Parent menu",
+  "Racine": "Root",
+  "Nom affiché sur l'OLED": "Name shown on OLED",
+  "Identifiant (stable)": "Identifier (stable)",
+  "Identifiant conservé si le nom change.": "ID stays the same when the label changes.",
+  "Type d'entrée": "Entry type",
+  "Action Home Assistant": "Home Assistant action",
+  "Information seulement": "Information only",
+  "Action locale (hors ligne)": "Local action (offline)",
+  "Action locale": "Local action",
+  "Identifier (LED)": "Identify (LED)",
+  "Basculer la LED": "Toggle LED",
+  "Veille OLED": "OLED sleep",
+  "Confirmation avant exécution": "Require confirmation",
+  "Service (domaine.action)": "Service (domain.action)",
+  "Entité cible": "Target entity",
+  "Entité": "Entity",
+  "Données supplémentaires (JSON facultatif)": "Additional data (optional JSON)",
+  "Appliquer les réglages": "Apply controls",
+  "Réglages par appui long": "Long-press controls",
+  "Basculer une lumière": "Toggle a light",
+  "Allumer une lumière": "Turn on a light",
+  "Éteindre une lumière": "Turn off a light",
+  "Basculer une prise / un interrupteur": "Toggle a switch / outlet",
+  "Allumer une prise / un interrupteur": "Turn on a switch / outlet",
+  "Éteindre une prise / un interrupteur": "Turn off a switch / outlet",
+  "Basculer une entité (universel)": "Toggle entity (universal)",
+  "Activer un thermostat": "Enable thermostat",
+  "Arrêter un thermostat": "Turn off thermostat",
+  "Basculer un humidificateur": "Toggle humidifier",
+  "Activer un humidificateur": "Turn on humidifier",
+  "Arrêter un humidificateur": "Turn off humidifier",
+  "Ouvrir un volet / portail": "Open cover / gate",
+  "Fermer un volet / portail": "Close cover / gate",
+  "Lancer un script": "Run script",
+  "Activer une scène": "Activate scene",
+  "Autre action...": "Other action...",
+  "Aucune / dossier": "None / folder",
+  "Intensité (0–100 %)": "Brightness (0–100%)",
+  "Température (K)": "Color temperature (K)",
+  "Couleur": "Color",
+  "Température cible": "Target temperature",
+  "Mode du thermostat": "HVAC mode",
+  "Humidité cible": "Target humidity",
+  "Mode": "Mode",
+  "Position (0–100 %)": "Position (0–100%)",
+  "Ouvrir": "Open",
+  "Arrêter": "Stop",
+  "Fermer": "Close",
+  "Vitesse (0–100 %)": "Speed (0–100%)",
+  "Oscillation": "Oscillation",
+  "Direction": "Direction",
+  "Volume (0–100 %)": "Volume (0–100%)",
+  "Lecture / pause": "Play / pause",
+  "Morceau suivant": "Next track",
+  "Morceau précédent": "Previous track",
+  "Couleur active": "Active color",
+  "Couleur inactive": "Inactive color",
+  "Taille de police OLED": "OLED font size",
+  "Normale": "Normal",
+  "Petite": "Small",
+  "Pas de luminosité": "Brightness step",
+  "Contraste OLED (1–100 %)": "OLED contrast (1–100%)",
+  "Veille écran et LED (secondes)": "Screen and LED sleep (seconds)",
+  "Réglage direct au long clic": "Direct edit on long press",
+  "Inverser la rotation": "Invert encoder rotation",
+  "Animations de navigation": "Menu animations",
+  "Dernier menu disponible hors ligne": "Cache menu for offline use",
+  "Raccourcis de l'encodeur": "Encoder shortcuts",
+  "Double clic": "Double click",
+  "Triple clic": "Triple click",
+  "Maintien prolongé (1,8 s)": "Extended hold (1.8 s)",
+  "Service Home Assistant": "Home Assistant service",
+  "Données du service (JSON)": "Service data (JSON)",
+  "Laisser les champs vides pour désactiver ce raccourci.": "Leave blank to disable the shortcut.",
+  "Déposer ici pour déplacer à la racine (en dernier)": "Drop here to move to root (last)",
+  "Sous-menu": "Submenu",
+  "Action non configurée": "No action configured",
+  "+ Ajouter dans ce menu": "+ Add child entry",
+  "↑ Monter": "↑ Move up",
+  "↓ Descendre": "↓ Move down",
+  "Supprimer": "Delete",
+  "Réseau": "Network",
+  "Adresse IP": "IP address",
+  "Depuis le démarrage": "Uptime",
+  "Connexion HA": "HA connection",
+  "Dernière synchro": "Last sync",
+  "Menu": "Menu",
+  "Connecté": "Connected",
+  "Déconnecté": "Disconnected",
+  "À jour": "Up to date",
+  "En cours": "In progress",
+  "Informations": "Information",
+  "Retour": "Back",
+  "Langue / Language": "Language",
+  "Certaines données manquent. Vérifie les entités de diagnostic ESPHome et flashe le firmware 0.4 pour la remontée directe.": "Some diagnostics are missing. Check ESPHome diagnostic entities.",
+  "0 : toujours allumés. La LED retrouve sa couleur au réveil.": "0: always on. The LED restores its color when awakened."
+};
+
 const STYLES = `
   :host { display:block; min-height:100%; color:var(--primary-text-color); background:var(--primary-background-color); font:14px/1.45 var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
   * { box-sizing:border-box; }
@@ -198,6 +316,28 @@ class HAMenuC3Panel extends HTMLElement {
     await this.fetch(nextId);
   }
 
+  get language() { return this.status?.config?.settings?.language === "en" ? "en" : "fr"; }
+  localize(root=this.shadowRoot) {
+    if (this.language !== "en" || typeof document === "undefined" || !root) return;
+    const walker = document.createTreeWalker(root, 4);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (parent?.closest(".tree-item,.entity-option")) continue;
+      const text = node.nodeValue;
+      const trim = text.trim();
+      if (EN_TRANSLATIONS[trim]) node.nodeValue = text.replace(trim, EN_TRANSLATIONS[trim]);
+    }
+    if (root.querySelectorAll) {
+      for (const el of root.querySelectorAll("[placeholder],[title]")) {
+        for (const attr of ["placeholder", "title"]) {
+          const raw = el.getAttribute(attr);
+          if (raw && EN_TRANSLATIONS[raw]) el.setAttribute(attr, EN_TRANSLATIONS[raw]);
+        }
+      }
+    }
+  }
+
   get items() { return this.status?.config?.items || []; }
   get selected() { return this.items.find((item) => item.id === this.selectedId) || null; }
   isFolder(item) { return this.items.some((i) => i.parent === item.id); }
@@ -262,6 +402,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.renderLed();
     this.renderSettings();
     this.renderDiagnostics();
+    this.localize();
   }
 
   renderNotice() {
@@ -387,14 +528,17 @@ class HAMenuC3Panel extends HTMLElement {
         <button class="btn" data-op="move-down">↓ Descendre</button>
         <button class="btn danger" data-op="delete">Supprimer</button>
       </div>`;
+    this.localize(host);
     const select = host.querySelector('[data-edit="preset"]');
     if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
   }
 
   refreshControlOptions() {
     const host = this.shadowRoot.querySelector("#control-options");
-    if (host && this.selected) host.innerHTML =
-      this.renderControlOptions(this.selected, this.isFolder(this.selected));
+    if (host && this.selected) {
+      host.innerHTML = this.renderControlOptions(this.selected, this.isFolder(this.selected));
+      this.localize(host);
+    }
   }
 
   renderControlOptions(item, folder) {
