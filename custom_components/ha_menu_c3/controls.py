@@ -109,9 +109,11 @@ def adjustment(item: dict, state, field: str, value: str) -> Adjustment:
         return Adjustment("light", "turn_on", data)
     if field == "color_temp":
         data["color_temp_kelvin"] = bounded_int(number, payload["min_kelvin"], payload["max_kelvin"], payload["kelvin"])
+        data["transition"] = 0
         return Adjustment("light", "turn_on", data)
     if field == "color":
         data["hs_color"] = [bounded_int(number, 0, 359, 0), 100]
+        data["transition"] = 0
         return Adjustment("light", "turn_on", data)
     if field == "temperature":
         tenths = bounded_int(number, payload["min_temp_x10"], payload["max_temp_x10"], payload["temp_x10"])
