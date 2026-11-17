@@ -209,7 +209,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="wrap">
       <div class="top">
         <div>
-          <h1>HA Menu C3 <small class="sub">v0.5.4</small></h1>
+          <h1>HA Menu C3 <small class="sub">v0.6.0</small></h1>
           <p class="sub">Menus, actions et LED</p>
         </div>
         <div class="actions">
@@ -311,6 +311,8 @@ class HAMenuC3Panel extends HTMLElement {
       return;
     }
     const folder = this.isFolder(item);
+    const kind = item.kind || "action";
+    const actionEnabled = !folder && kind === "action";
     // Search is rendered as a filtered list so friendly names (including plugs) are discoverable.
     const parentChoices = [`<option value="">Racine</option>`, ...this.items
       .filter((i)=> i.id !== item.id && !this.isDescendant(i.id, item.id))
@@ -375,7 +377,7 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   renderControlOptions(item, folder) {
-    if (folder) return "";
+    if (folder || (item.kind || "action") !== "action") return "";
     const entityId = (item.entity_id || "").trim();
     const domain = entityId.split(".")[0];
     const live = this._hass?.states?.[entityId];
@@ -396,10 +398,27 @@ class HAMenuC3Panel extends HTMLElement {
         ["humidity", "Humidité cible", !!live],
         ["humidifier_mode", "Mode", !!(features & 1) && (attrs.available_modes || []).length > 0],
       ],
+      cover: [
+        ["cover_position", "Position (0–100 %)", !!(features & 4)],
+        ["cover_open", "Ouvrir", !!(features & 1)],
+        ["cover_stop", "Arrêter", !!(features & 8)],
+        ["cover_close", "Fermer", !!(features & 2)],
+      ],
+      fan: [
+        ["fan_percentage", "Vitesse (0–100 %)", !!(features & 1)],
+        ["fan_oscillate", "Oscillation", !!(features & 2)],
+        ["fan_direction", "Direction", !!(features & 4)],
+      ],
+      media_player: [
+        ["media_volume", "Volume (0–100 %)", !!(features & 4)],
+        ["media_toggle", "Lecture / pause", !!(features & (1 | 16384))],
+        ["media_next", "Morceau suivant", !!(features & 32)],
+        ["media_previous", "Morceau précédent", !!(features & 16)],
+      ],
     }[domain] || [];
     if (!options.length) return `<div class="section"><div class="field">
       <label>Réglages par appui long</label>
-      <p class="hint">Sélectionne une lampe, un thermostat ou un humidificateur pour régler ses paramètres depuis l'OLED.</p>
+      <p class="hint">Choisis une lampe, un volet, un ventilateur, un lecteur multimédia, un thermostat ou un humidificateur.</p>
     </div></div>`;
     return `<div class="section"><div class="field"><label>Réglages par appui long</label>
       <p class="hint">Coche les fonctions voulues et clique sur « Appliquer les réglages ». Le clic court garde l'action ci-dessus.</p>
@@ -509,7 +528,7 @@ class HAMenuC3Panel extends HTMLElement {
     if (this.items.length >= 32) return this.show("Le firmware accepte 32 entrées au maximum.", "error");
     const uid = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
     const item = {id:uid, label: folder ? "Nouveau sous-menu" : "Nouvelle action", parent,
-      service:"", entity_id:"", data:{}, controls:{}};
+      service:"", entity_id:"", data:{}, controls:{}, kind:"action", local_command:"", confirm:false};
     this.items.push(item);
     if (parent) {
       const parentItem = this.items.find(i => i.id === parent);
