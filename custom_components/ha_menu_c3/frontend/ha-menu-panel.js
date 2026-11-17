@@ -209,7 +209,7 @@ class HAMenuC3Panel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLES}</style><div class="wrap">
       <div class="top">
         <div>
-          <h1>HA Menu C3 <small class="sub">v0.5.3</small></h1>
+          <h1>HA Menu C3 <small class="sub">v0.5.4</small></h1>
           <p class="sub">Menus, actions et LED</p>
         </div>
         <div class="actions">
