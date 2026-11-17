@@ -430,7 +430,7 @@ class HAMenuC3Panel extends HTMLElement {
         const folder = this.isFolder(item);
         const siblings = this.items.filter(i=>i.parent===item.parent);
         const prev = siblings[siblings.findIndex(i=>i.id===item.id)-1];
-        const canIndent = !!prev && !prev.service && !this.isDescendant(prev.id,item.id);
+        const canIndent = !!prev && !prev.service && (prev.kind || "action")==="action" && !this.isDescendant(prev.id,item.id);
         rows.push(`<div role="button" tabindex="0" draggable="true" data-select="${esc(item.id)}" class="tree-row ${item.id === this.selectedId ? "active" : ""}" style="padding-left:${9 + level * 16}px">
           <span class="tree-handle" aria-label="Déplacer">⠿</span><span class="tree-glyph">${folder ? "▸" : "•"}</span>
           <span class="tree-item">${esc(item.label)}<small>${folder ? "Sous-menu" : esc(item.service || "Action non configurée")}</small></span>
@@ -509,6 +509,13 @@ class HAMenuC3Panel extends HTMLElement {
             <option value="humidifier.turn_off">Arrêter un humidificateur</option>
             <option value="cover.open_cover">Ouvrir un volet / portail</option>
             <option value="cover.close_cover">Fermer un volet / portail</option>
+            <option value="cover.stop_cover">Arrêter un volet / portail</option>
+            <option value="fan.toggle">Basculer un ventilateur</option>
+            <option value="fan.turn_on">Allumer un ventilateur</option>
+            <option value="fan.turn_off">Éteindre un ventilateur</option>
+            <option value="media_player.media_play_pause">Lecture / pause</option>
+            <option value="media_player.media_next_track">Morceau suivant</option>
+            <option value="media_player.media_previous_track">Morceau précédent</option>
             <option value="script.turn_on">Lancer un script</option>
             <option value="scene.turn_on">Activer une scène</option>
             <option value="custom">Autre action...</option>
@@ -534,7 +541,7 @@ class HAMenuC3Panel extends HTMLElement {
       </div>`;
     this.localize(host);
     const select = host.querySelector('[data-edit="preset"]');
-    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
+    if (select) select.value = ["", "light.toggle", "light.turn_on", "light.turn_off", "switch.toggle", "switch.turn_on", "switch.turn_off", "homeassistant.toggle", "cover.open_cover", "cover.close_cover", "cover.stop_cover", "fan.toggle", "fan.turn_on", "fan.turn_off", "media_player.media_play_pause", "media_player.media_next_track", "media_player.media_previous_track", "script.turn_on", "scene.turn_on", "climate.turn_on", "climate.turn_off", "humidifier.toggle", "humidifier.turn_on", "humidifier.turn_off"].includes(item.service) ? item.service : "custom";
   }
 
   refreshControlOptions() {
@@ -927,7 +934,7 @@ class HAMenuC3Panel extends HTMLElement {
       if (input) input.value = this.selected.entity_id;
       const domain = this.selected.entity_id.split(".")[0];
       this.selected.controls = Object.fromEntries(Object.entries(this.selected.controls || {})
-        .filter(([key]) => ({light:["brightness","color_temp","color"],climate:["temperature","hvac_mode"],humidifier:["humidity","humidifier_mode"]}[domain] || []).includes(key)));
+        .filter(([key]) => ({light:["brightness","color_temp","color"],climate:["temperature","hvac_mode"],humidifier:["humidity","humidifier_mode"],cover:["cover_position","cover_open","cover_stop","cover_close"],fan:["fan_percentage","fan_oscillate","fan_direction"],media_player:["media_volume","media_toggle","media_next","media_previous"]}[domain] || []).includes(key)));
       this.renderEditor();
       return;
     }
