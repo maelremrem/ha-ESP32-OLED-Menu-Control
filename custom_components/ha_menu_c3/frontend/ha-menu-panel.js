@@ -756,6 +756,21 @@ class HAMenuC3Panel extends HTMLElement {
 
   commitEditor() {
     const item=this.selected;
+    const shortcuts=this.shadowRoot.querySelectorAll?.('textarea[data-shortcut-key="data"]') || [];
+    for (const textarea of shortcuts) {
+      const gesture = textarea.dataset.shortcut;
+      this.status.config.shortcuts ||= {};
+      this.status.config.shortcuts[gesture] ||= {service:"", entity_id:"", data:{}};
+      try {
+        const data = JSON.parse(textarea.value.trim() || "{}");
+        if (!data || Array.isArray(data) || typeof data !== "object")
+          throw new Error("JSON object required");
+        this.status.config.shortcuts[gesture].data = data;
+      } catch (err) {
+        this.show("JSON invalide pour le raccourci " + gesture + ": " + err.message, "error");
+        return false;
+      }
+    }
     const textarea=this.shadowRoot.querySelector('textarea[data-edit="data"]');
     if(!item || !textarea || textarea.disabled) {this.editJsonError="";return true;}
     try {
@@ -772,6 +787,20 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onInput(event) {
+    if (event.target.dataset.confirm && this.selected) {
+      this.selected.confirm = event.target.checked;
+      return;
+    }
+    if (event.target.dataset.shortcut && this.status) {
+      const {shortcut, shortcutKey} = event.target.dataset;
+      this.status.config.shortcuts ||= {};
+      this.status.config.shortcuts[shortcut] ||= {service:"", entity_id:"", data:{}};
+      if (shortcutKey === "data") {
+        try { this.status.config.shortcuts[shortcut].data = JSON.parse(event.target.value || "{}"); }
+        catch (_) {}
+      } else this.status.config.shortcuts[shortcut][shortcutKey] = event.target.value;
+      return;
+    }
     if (event.target.dataset.control && this.selected) {
       this.setControl(event.target.dataset.control, event.target.checked);
       return;
@@ -779,11 +808,11 @@ class HAMenuC3Panel extends HTMLElement {
     if (event.target.dataset.entitySearch) this.renderEntityResults(event.target.value);
     const setting = event.target.dataset.setting;
     if (setting && this.status) {
-      const value = Number(event.target.value);
-      if (Number.isInteger(value) && value >= 0 && value <= 3600) {
-        this.status.config.settings ||= {};
-        this.status.config.settings[setting] = value;
-      }
+      this.status.config.settings ||= {};
+      const input = event.target;
+      const value = input.type === "checkbox" ? input.checked :
+                    input.type === "number" ? Number(input.value) : input.value;
+      this.status.config.settings[setting] = value;
     }
     const edit=event.target.dataset.edit;
     const item=this.selected;
@@ -808,6 +837,19 @@ class HAMenuC3Panel extends HTMLElement {
   }
 
   onChange(event) {
+    if (event.target.dataset.confirm && this.selected) {
+      this.selected.confirm = event.target.checked;
+      return;
+    }
+    if (event.target.dataset.setting) {
+      this.onInput(event);
+      if (event.target.dataset.setting === "language") this.render();
+      return;
+    }
+    if (event.target.dataset.shortcut) {
+      this.onInput(event);
+      return;
+    }
     if (event.target.dataset.control && this.selected) {
       this.setControl(event.target.dataset.control, event.target.checked);
       return;
@@ -820,6 +862,16 @@ class HAMenuC3Panel extends HTMLElement {
     const item=this.selected;
     if(!item || !edit) return;
     if(edit === "entity_id") { this.refreshControlOptions(); return; }
+    if(edit === "kind") {
+      item.kind = event.target.value;
+      if (item.kind !== "action") { item.service = ""; item.controls = {}; item.data = {}; }
+      if (item.kind === "local") { item.entity_id = ""; item.local_command ||= "identify"; }
+      if (item.kind === "info") item.confirm = false;
+      this.renderTree();
+      this.renderEditor();
+      return;
+    }
+    if(edit === "local_command") { item.local_command = event.target.value; return; }
     if(edit==="preset") {
       if(event.target.value!=="custom") {
         item.service=event.target.value;
