@@ -247,6 +247,7 @@ class MenuManager:
                     "brightness_step": settings["brightness_step"],
                     "encoder_inverted": settings["encoder_inverted"],
                     "animations": settings["animations"],
+                    "animation_ms": settings["animation_ms"],
                     "oled_contrast": settings["oled_contrast"],
                     "font_size": settings["font_size"],
                     "offline_cache": settings["offline_cache"],
