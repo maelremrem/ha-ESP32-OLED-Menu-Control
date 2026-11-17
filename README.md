@@ -14,22 +14,27 @@ Each controller has its **own menu, LED settings and sleep timer**. The device s
 
 ## Version 0.6 — Universal controller
 
-Version **0.6.0** introduces six groups of features plus French/English localization.
+Version **0.6.0** introduces six groups of features plus French/English localization. Firmware **0.6.1** fixes offline cache persistence.
 
 1. **Direct controls:** enable *Direct edit on long press* in the settings to start adjusting the first numeric property immediately when a compatible device opens. Other properties are selectable with the encoder. Percent-based values can use steps of 1%, 5%, or 10%.
 2. **More Home Assistant devices:** configurable long-press options for covers (position/open/stop/close), fans (percentage/oscillation/direction), and media players (volume/play-pause/next/previous), in addition to lights, climate and humidifiers. Unsupported operations are hidden based on the entity's supported feature flags.
 3. **Informational entries:** choose *Information only* for an entity to show live state in the menu and a bigger, two-line readout after pressing. A normal action entry can still display an entity's live state.
 4. **Shortcuts:** bind Home Assistant services (plus entity and optional JSON data) to double click, triple click and extended hold. When a multi-click shortcut is configured, single clicks are delayed about 320 ms to distinguish the gesture. Normal 0.7–1.8-second long presses continue to open the control menu; an extended 1.8-second hold triggers its configured shortcut.
-5. **Offline cache and confirmation:** the controller saves the last fully synchronized menu to ESP32 NVS flash (up to 3,800 serialized characters). At boot, a cached menu can be browsed without HA, with an **OFFLINE** heading. Only the explicitly supported local actions (*Identify LED*, *Toggle LED*, *OLED sleep*) run without HA; Home Assistant services and advanced controls require a connection. Enable **Require confirmation** on sensitive actions so the OLED asks for approval before executing them. Menu snapshots are saved only after a successful full sync, not on every entity state update. Very large menus may exceed the cache capacity and remain online-only.
+5. **Offline cache and confirmation:** the controller saves the last fully synchronized menu to ESP32 NVS flash (up to 3,800 serialized bytes, split across 16 restored strings of 240 bytes each, with a checksum for integrity). At boot, a cached menu can be browsed without HA, with an **OFFLINE** heading. Only the explicitly supported local actions (*Identify LED*, *Toggle LED*, *OLED sleep*) run without HA; Home Assistant services and advanced controls require a connection. Enable **Require confirmation** on sensitive actions so the OLED asks for approval before executing them. Menu snapshots are saved only after a successful full sync, not on every entity state update. Very large menus may exceed the cache capacity and remain online-only.
 6. **Display and encoder personalization:** language, font size (normal/small), OLED contrast, navigation animations and speed, encoder direction, direct-edit behavior, and idle sleep are configurable in the HA Menu C3 panel.
 
 ### English support
 
 In **Settings & status → Language**, choose **English** (or **Français**), then click **Save**. The OLED's system labels and the configuration panel follow the selected language. The option is stored per controller.
 
+
+### Offline cache fix (firmware 0.6.1)
+
+ESPHome limits the restored length of one `std::string` global to **254 characters**. The old 3,800-character global in firmware 0.6.0 fails YAML validation. Firmware 0.6.1 splits the snapshot into 16 × 240-byte persistent blocks and verifies a checksum before restoring it. If a snapshot is too large or invalid, the controller waits for Home Assistant rather than showing an incomplete menu. Changes in flash are subject to the normal ESPHome preferences write interval; allow the device to remain powered after the first synchronization. No HACS integration update is required (integration 0.6.0 remains compatible).
+
 ### Upgrade
 
-Update the HACS integration to **0.6.0**, **restart Home Assistant**, and **OTA flash ESPHome 0.6.0** from the existing GitHub package. The new integration and firmware must be updated together because new ESPHome user actions and menu fields are required.
+Update the HACS integration to **0.6.0**, **restart Home Assistant**, and **OTA flash ESPHome 0.6.1** from the existing GitHub package. The new integration and firmware must be updated together because new ESPHome user actions and menu fields are required.
 
 ## Firmware
 
@@ -74,7 +79,7 @@ Use 3.3 V for OLED/encoder and 5 V for the LED, with a common ground. A logic-le
 
 ## Diagnostics
 
-Open **Réglages et état** in the sidebar panel for Wi-Fi RSSI, SSID, IP, uptime, HA connection and last sync. The panel refreshes automatically every 15 seconds. Firmware **0.6.0** sends diagnostic updates directly on integration heartbeat; it also exposes regular ESPHome entities. Previous firmware may require enabling its diagnostics entities in Home Assistant.
+Open **Réglages et état** in the sidebar panel for Wi-Fi RSSI, SSID, IP, uptime, HA connection and last sync. The panel refreshes automatically every 15 seconds. Firmware **0.6.1** sends diagnostic updates directly on integration heartbeat; it also exposes regular ESPHome entities. Previous firmware may require enabling its diagnostics entities in Home Assistant.
 
 The menu and settings are saved by HA. The ESP32 uses RAM for the menu and restores it from HA when connected. There are up to 32 configurable entries and 8 levels. Each device requires a unique `esphome.name`. Sensitive actions such as locks or garages currently execute without an on-screen confirmation.
 
