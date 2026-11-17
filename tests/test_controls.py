@@ -18,6 +18,12 @@ class ControlsTests(unittest.TestCase):
         data=attributes_payload(item,value)
         self.assertEqual(data["flags"],7)
         self.assertEqual(data["brightness"],123)
+        immediate = adjustment(item,value,"brightness","170")
+        self.assertEqual(immediate.domain, "light")
+        self.assertEqual(immediate.service, "turn_on")
+        self.assertEqual(immediate.data, {
+            "entity_id": "light.salon", "brightness": 170, "transition": 0,
+        })
         self.assertEqual(adjustment(item,value,"color_temp","2000").data["color_temp_kelvin"],2700)
         self.assertEqual(adjustment(item,value,"color","45").data["hs_color"],[45,100])
 

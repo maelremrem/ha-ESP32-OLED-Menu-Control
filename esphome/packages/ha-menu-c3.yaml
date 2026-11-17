@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.5.6"
+  fw_version: "0.5.7"
 
 esphome:
   name: ${device_name}
@@ -1162,8 +1162,7 @@ script:
                 id(feedback_started) = millis();
 
   - id: send_adjust
-    mode: queued
-    max_runs: 20
+    mode: restart
     parameters:
       item_key: string
       field_key: string
