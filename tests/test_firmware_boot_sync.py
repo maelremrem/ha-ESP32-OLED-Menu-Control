@@ -23,11 +23,11 @@ class BootSyncTests(unittest.TestCase):
                 self.assertNotIn('id(boot_started)', source)
                 self.assertIn("initial_value: 'false'", source)
                 self.assertIn("id(menu_synced) = true;", source)
-                self.assertIn("if (!id(menu_synced)) {", source)
+                self.assertIn("if (!id(menu_synced) && !id(menu_cached)) {", source)
                 self.assertIn('"En attente de"', source)
                 self.assertIn('"Home Assistant"', source)
                 self.assertIn("if (id(menu_synced) && !id(screen_sleep)", source)
-                self.assertEqual(source.count("if (!id(menu_synced)) return;"), 3)
+                self.assertEqual(source.count("if (!id(menu_synced) && !id(menu_cached)) return;"), 3)
 
     def test_commit_action_is_after_menu_count(self):
         for path in FIRMWARE:
