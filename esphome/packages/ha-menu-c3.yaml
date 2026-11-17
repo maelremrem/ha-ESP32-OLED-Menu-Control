@@ -1364,12 +1364,7 @@ script:
                 return;
               }
             }
-            id(pending_item) = id(menu_ids)[i];
-            id(feedback_item) = id(menu_labels)[i];
-            id(feedback_message).clear();
-            id(feedback_suppressed) = false;
-            id(feedback_mode) = 1;
-            id(send_selection).execute();
+            id(execute_item).execute(i, false);
             return;
           }
           // Permanent last item in the root menu.
@@ -1381,6 +1376,65 @@ script:
             id(transition_direction) = 1;
             id(transition_started) = millis();
           }
+
+  - id: execute_item
+    mode: restart
+    parameters:
+      slot: int
+      confirmed: bool
+    then:
+      - lambda: |-
+          if (slot < 0 || slot >= id(menu_length)) return;
+          const std::string kind = id(menu_kinds)[slot];
+          if (kind == "info") {
+            id(info_slot) = slot;
+            return;
+          }
+          if (!confirmed && id(menu_confirm)[slot]) {
+            id(confirm_slot) = slot;
+            id(confirm_cursor) = 0;
+            return;
+          }
+          if (kind == "local") {
+            id(run_local).execute(id(menu_local_commands)[slot]);
+            return;
+          }
+          if (!id(menu_synced)) {
+            id(feedback_mode) = 3;
+            id(feedback_message) = id(ui_language) == "en" ? "Home Assistant offline" : "Home Assistant hors ligne";
+            id(feedback_started) = millis();
+            return;
+          }
+          id(pending_item) = id(menu_ids)[slot];
+          id(feedback_item) = id(menu_labels)[slot];
+          id(feedback_message).clear();
+          id(feedback_suppressed) = false;
+          id(feedback_mode) = 1;
+          id(send_selection).execute();
+
+  - id: run_local
+    mode: restart
+    parameters:
+      command: string
+    then:
+      - if:
+          condition:
+            lambda: 'return command == "identify";'
+          then:
+            - script.execute: identify_led
+      - if:
+          condition:
+            lambda: 'return command == "led_toggle";'
+          then:
+            - light.toggle: status_rgb
+      - if:
+          condition:
+            lambda: 'return command == "oled_sleep";'
+          then:
+            - lambda: |-
+                id(screen_sleep) = !id(screen_sleep);
+                if (id(screen_sleep)) id(oled).turn_off();
+                else id(oled).turn_on();
 
   - id: long_press
     mode: restart
