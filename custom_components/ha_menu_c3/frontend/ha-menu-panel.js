@@ -325,9 +325,30 @@ class HAMenuC3Panel extends HTMLElement {
       </div>
       <div class="field"><label>Identifiant (stable)</label><input value="${esc(item.id)}" disabled><div class="hint">Identifiant conservé si le nom change.</div></div>
       <div class="section">
+        <div class="form-grid">
+          <div class="field"><label>Type d'entrée</label>
+            <select data-edit="kind" ${folder ? "disabled" : ""}>
+              <option value="action" ${kind==="action" ? "selected" : ""}>Action Home Assistant</option>
+              <option value="info" ${kind==="info" ? "selected" : ""}>Information seulement</option>
+              <option value="local" ${kind==="local" ? "selected" : ""}>Action locale (hors ligne)</option>
+            </select>
+          </div>
+          <div class="field"><label>Action locale</label>
+            <select data-edit="local_command" ${kind==="local" && !folder ? "" : "disabled"}>
+              <option value="identify" ${item.local_command==="identify" ? "selected" : ""}>Identifier (LED)</option>
+              <option value="led_toggle" ${item.local_command==="led_toggle" ? "selected" : ""}>Basculer la LED</option>
+              <option value="oled_sleep" ${item.local_command==="oled_sleep" ? "selected" : ""}>Veille OLED</option>
+            </select>
+          </div>
+        </div>
+        <label class="control-check" style="margin-bottom:12px">
+          <input type="checkbox" data-confirm="true" ${item.confirm ? "checked" : ""}
+            ${folder || kind==="info" ? "disabled" : ""}>
+          Confirmation avant exécution
+        </label>
         <div class="field">
           <label>Action Home Assistant</label>
-          <select data-edit="preset" ${folder ? "disabled" : ""}>
+          <select data-edit="preset" ${actionEnabled ? "" : "disabled"}>
             <option value="">Aucune / dossier</option>
             <option value="light.toggle">Basculer une lumière</option>
             <option value="light.turn_on">Allumer une lumière</option>
@@ -349,13 +370,13 @@ class HAMenuC3Panel extends HTMLElement {
           </select>
           ${folder ? `<div class="hint">Cette entrée contient des enfants : elle fonctionne comme un sous-menu.</div>` : ""}
         </div>
-        <div class="field"><label>Service (domaine.action)</label><input data-edit="service" value="${esc(item.service)}" placeholder="light.toggle" ${folder ? "disabled" : ""}></div>
+        <div class="field"><label>Service (domaine.action)</label><input data-edit="service" value="${esc(item.service)}" placeholder="light.toggle" ${actionEnabled ? "" : "disabled"}></div>
         <div class="field"><label>Entité cible</label>
-          <input data-edit="entity_id" data-entity-search="true" autocomplete="off" value="${esc(item.entity_id)}" placeholder="Rechercher par nom ou identifiant (ex : prise, salon...)" ${folder ? "disabled" : ""}>
+          <input data-edit="entity_id" data-entity-search="true" autocomplete="off" value="${esc(item.entity_id)}" placeholder="Rechercher par nom ou identifiant (ex : prise, salon...)" ${folder || kind==="local" ? "disabled" : ""}>
           <div id="entity-results"></div>
           <div class="hint">Recherche par nom ou ID, prises incluses.</div>
         </div>
-        <div class="field"><label>Données supplémentaires (JSON facultatif)</label><textarea data-edit="data" spellcheck="false" ${folder ? "disabled" : ""}>${esc(this.editJson)}</textarea>
+        <div class="field"><label>Données supplémentaires (JSON facultatif)</label><textarea data-edit="data" spellcheck="false" ${actionEnabled ? "" : "disabled"}>${esc(this.editJson)}</textarea>
           <div class="hint">Exemple : {"brightness_pct": 60}</div>
         </div>
       </div>
