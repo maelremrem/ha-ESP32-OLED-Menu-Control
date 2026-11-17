@@ -224,6 +224,9 @@ class MenuManager:
                         "item_id": item["id"],
                         "parent_id": item["parent"],
                         "label": item["label"],
+                        "kind": item.get("kind", "action"),
+                        "local_command": item.get("local_command", ""),
+                        "confirm": item.get("confirm", False),
                     })
                 for slot, item in enumerate(items):
                     await self._call_esp("set_control_flags", {
@@ -236,6 +239,17 @@ class MenuManager:
                     })
                 await self._call_esp("set_sleep_timeout", {
                     "seconds": self.config["settings"]["sleep_seconds"]
+                })
+                settings = self.config["settings"]
+                await self._call_esp("set_user_settings", {
+                    "language": settings["language"],
+                    "direct_edit": settings["direct_edit"],
+                    "brightness_step": settings["brightness_step"],
+                    "encoder_inverted": settings["encoder_inverted"],
+                    "animations": settings["animations"],
+                    "oled_contrast": settings["oled_contrast"],
+                    "font_size": settings["font_size"],
+                    "offline_cache": settings["offline_cache"],
                 })
                 await self.sync_led()
                 stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -295,6 +309,30 @@ class MenuManager:
             "red": red, "green": green, "blue": blue,
         })
 
+    async def execute_shortcut(self, gesture: str) -> None:
+        """Run explicitly configured user shortcuts on the HA side."""
+        action = self.config.get("shortcuts", {}).get(gesture)
+        if not action:
+            return
+        try:
+            domain, service = action["service"].split(".", 1)
+            if not self.hass.services.has_service(domain, service):
+                raise ValueError(f"Service unavailable: {domain}.{service}")
+            data = dict(action["data"])
+            if action["entity_id"]:
+                data["entity_id"] = action["entity_id"]
+            await self.hass.services.async_call(domain, service, data, blocking=True)
+        except Exception as err:
+            _LOGGER.warning("Shortcut %s on %s failed: %s", gesture, self.device_name, err)
+
+    @callback
+    def on_shortcut(self, event) -> None:
+        if event.data.get("device") != self.device_name:
+            return
+        gesture = event.data.get("gesture")
+        if gesture in ("double", "triple", "hold"):
+            self.hass.async_create_task(self.execute_shortcut(gesture))
+
     async def handle_selection(self, item_id: str) -> None:
         item = next((i for i in self.config["items"] if i["id"] == item_id), None)
         success = False
@@ -302,6 +340,8 @@ class MenuManager:
         try:
             if item is None:
                 raise ValueError(f"Unknown menu entry {item_id}")
+            if item.get("kind") != "action":
+                raise ValueError("Entry does not perform a Home Assistant action")
             if any(i["parent"] == item_id for i in self.config["items"]):
                 raise ValueError("Submenu entry cannot execute an action")
             if not item["service"]:
@@ -547,6 +587,8 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_READY, manager.on_ready))
     entry.async_on_unload(hass.bus.async_listen(EVENT_SELECTED, manager.on_selected))
+    entry.async_on_unload(hass.bus.async_listen(
+        "esphome.ha_menu_shortcut", manager.on_shortcut))
     entry.async_on_unload(hass.bus.async_listen(
         "esphome.ha_menu_controls_open", manager.on_controls_open))
     entry.async_on_unload(hass.bus.async_listen(
