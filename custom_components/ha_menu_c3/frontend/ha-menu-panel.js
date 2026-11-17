@@ -87,6 +87,7 @@ const EN_TRANSLATIONS = {
   "Normale": "Normal",
   "Petite": "Small",
   "Pas de luminosité": "Brightness step",
+  "Vitesse d'animation (ms)": "Animation speed (ms)",
   "Contraste OLED (1–100 %)": "OLED contrast (1–100%)",
   "Veille écran et LED (secondes)": "Screen and LED sleep (seconds)",
   "Réglage direct au long clic": "Direct edit on long press",
@@ -673,6 +674,9 @@ class HAMenuC3Panel extends HTMLElement {
         </div>
         <div class="field"><label>Veille écran et LED (secondes)</label>
           <input type="number" min="0" max="3600" data-setting="sleep_seconds" value="${esc(settings.sleep_seconds ?? 30)}">
+        </div>
+        <div class="field"><label>Vitesse d'animation (ms)</label>
+          <input type="number" min="100" max="500" step="10" data-setting="animation_ms" value="${esc(settings.animation_ms ?? 220)}">
         </div>
       </div>
       <div class="control-list">
