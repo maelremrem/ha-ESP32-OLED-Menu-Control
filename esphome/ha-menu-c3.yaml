@@ -13,8 +13,50 @@ esphome:
       - lambda: |-
           id(menu_length) = 0;
           id(menu_synced) = false;
+          id(menu_cached) = false;
           id(sync_wait_started) = millis();
           id(last_input) = millis();
+          // Restore the last confirmed menu, never an incomplete transfer.
+          if (!id(cached_menu_blob).empty()) {
+            const std::string blob = id(cached_menu_blob);
+            size_t at = 0;
+            auto take = [&](std::string &out) -> bool {
+              const size_t colon = blob.find(':', at);
+              if (colon == std::string::npos || colon - at > 5 || colon == at) return false;
+              size_t length = 0;
+              for (size_t k = at; k < colon; ++k) {
+                if (blob[k] < '0' || blob[k] > '9') return false;
+                length = length * 10 + (blob[k] - '0');
+              }
+              at = colon + 1;
+              if (length > 3800 || at + length > blob.size()) return false;
+              out = blob.substr(at, length);
+              at += length;
+              return true;
+            };
+            std::string token;
+            bool ok = take(token) && token == "HA6" && take(token);
+            int count = ok ? std::atoi(token.c_str()) : 0;
+            if (count < 1 || count > 32) ok = false;
+            for (int i = 0; ok && i < count; ++i) {
+              std::string id_value, label, parent, state, kind, command, flags, confirm;
+              ok = take(id_value) && take(label) && take(parent) && take(state) &&
+                   take(kind) && take(command) && take(flags) && take(confirm);
+              if (!ok || id_value.empty() || label.empty()) { ok = false; break; }
+              id(menu_ids)[i] = id_value;
+              id(menu_labels)[i] = label;
+              id(menu_parents)[i] = parent;
+              id(menu_states)[i] = state;
+              id(menu_kinds)[i] = kind;
+              id(menu_local_commands)[i] = command;
+              id(menu_control_flags)[i] = std::clamp(std::atoi(flags.c_str()), 0, 262143);
+              id(menu_confirm)[i] = confirm == "1" ? 1 : 0;
+            }
+            if (ok && at == blob.size()) {
+              id(menu_length) = count;
+              id(menu_cached) = true;
+            }
+          }
       - script.execute: boot_led
 
 esp32:
@@ -57,6 +99,10 @@ api:
             id(menu_ids)[slot] = item_id.substr(0, 40);
             id(menu_parents)[slot] = parent_id.substr(0, 40);
             id(menu_labels)[slot] = label.substr(0, 64);
+            if (slot == 0) {
+              id(menu_synced) = false;
+              id(menu_cached) = false;
+            }
             id(menu_kinds)[slot] = kind == "info" || kind == "local" ? kind : "action";
             id(menu_local_commands)[slot] = local_command.substr(0, 24);
             id(menu_confirm)[slot] = confirm ? 1 : 0;
@@ -182,6 +228,7 @@ api:
       then:
         - lambda: |-
             id(menu_length) = static_cast<int>(std::clamp<int32_t>(count, 0, 32));
+            id(menu_cached) = false;
             id(current_page) = "";
             id(cursor) = 0;
             id(transition_direction) = 0;
@@ -264,6 +311,30 @@ api:
             id(extension_last_update).publish_state(last_update.substr(0, 48));
             // Final commit: all menu data and options have been sent by HA.
             id(menu_synced) = true;
+            id(menu_cached) = false;
+            if (id(ui_offline_cache)) {
+              std::string cached;
+              auto add = [&](const std::string &s) {
+                cached += std::to_string(s.size()) + ":" + s;
+              };
+              add("HA6");
+              add(std::to_string(id(menu_length)));
+              for (int i = 0; i < id(menu_length); ++i) {
+                add(id(menu_ids)[i]);
+                add(id(menu_labels)[i]);
+                add(id(menu_parents)[i]);
+                add(id(menu_states)[i]);
+                add(id(menu_kinds)[i]);
+                add(id(menu_local_commands)[i]);
+                add(std::to_string(id(menu_control_flags)[i]));
+                add(std::to_string(id(menu_confirm)[i]));
+              }
+              // NVS-backed string; avoid partial writes for very large menus.
+              if (cached.size() <= 3800 && cached != id(cached_menu_blob))
+                id(cached_menu_blob) = cached;
+            } else {
+              id(cached_menu_blob) = "";
+            }
 
     - action: extension_heartbeat
       description: Keep the integration connectivity diagnostic current
@@ -462,6 +533,14 @@ globals:
   - id: menu_synced
     type: bool
     initial_value: 'false'
+  - id: menu_cached
+    type: bool
+    initial_value: 'false'
+  - id: cached_menu_blob
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 3800
+    initial_value: '""'
   - id: ui_language
     type: std::string
     initial_value: '"fr"'
@@ -708,7 +787,7 @@ display:
       if (id(screen_sleep)) return;
       const uint32_t now = millis();
       // Stay on the boot screen until the integration commits a full sync.
-      if (!id(menu_synced)) {
+      if (!id(menu_synced) && !id(menu_cached)) {
         if ((uint32_t)(now - id(sync_wait_started)) >= 30000U) {
           const char *reason = nullptr;
           const char *hint = nullptr;
@@ -861,7 +940,8 @@ display:
 
       auto render_page = [&](const std::string &page, int x, int selection) {
         const bool about = page == "__about";
-        std::string title = about ? (id(ui_language) == "en" ? "ABOUT" : "A PROPOS") : "HA MENU";
+        std::string title = about ? (id(ui_language) == "en" ? "ABOUT" : "A PROPOS") :
+                            (!id(menu_synced) ? "OFFLINE" : "HA MENU");
         for (int i = 0; !about && i < id(menu_length); i++) {
           if (!page.empty() && id(menu_ids)[i] == page) {
             title = id(menu_labels)[i];
@@ -1026,7 +1106,7 @@ script:
       direction: int
     then:
       - lambda: |-
-          if (!id(menu_synced)) return;
+          if (!id(menu_synced) && !id(menu_cached)) return;
           const int delta = id(ui_encoder_inverted) ? -direction : direction;
           const uint32_t now = millis();
           // Guard against mechanical bounce; tune encoder_debounce_ms.
@@ -1171,7 +1251,7 @@ script:
     mode: restart
     then:
       - lambda: |-
-          if (!id(menu_synced)) return;
+          if (!id(menu_synced) && !id(menu_cached)) return;
           bool was_asleep = id(screen_sleep);
           id(screen_sleep) = false;
           id(last_input) = millis();
@@ -1267,7 +1347,7 @@ script:
     mode: restart
     then:
       - lambda: |-
-          if (!id(menu_synced)) return;
+          if (!id(menu_synced) && !id(menu_cached)) return;
           const uint32_t now = millis();
           const bool was_asleep = id(screen_sleep);
           id(last_input) = now;
