@@ -299,6 +299,7 @@ api:
         brightness_step: int
         encoder_inverted: bool
         animations: bool
+        animation_ms: int
         oled_contrast: int
         offline_cache: bool
       then:
@@ -309,6 +310,7 @@ api:
             id(ui_brightness_step) = brightness_step == 1 || brightness_step == 10 ? brightness_step : 5;
             id(ui_encoder_inverted) = encoder_inverted;
             id(ui_animations) = animations;
+            id(ui_animation_ms) = std::clamp<int32_t>(animation_ms, 100, 500);
             id(ui_contrast) = std::clamp<int32_t>(oled_contrast, 1, 100);
             id(ui_offline_cache) = offline_cache;
             id(oled).set_contrast(id(ui_contrast) / 100.0f);
@@ -576,6 +578,9 @@ globals:
   - id: ui_animations
     type: bool
     initial_value: 'true'
+  - id: ui_animation_ms
+    type: int
+    initial_value: '220'
   - id: ui_contrast
     type: int
     initial_value: '80'
@@ -1104,8 +1109,8 @@ display:
       };
 
       const uint32_t age = (uint32_t)(now - id(transition_started));
-      if (id(ui_animations) && id(transition_direction) != 0 && age < 220) {
-        const int dx = (int)((age * 128U) / 220U);
+      if (id(ui_animations) && id(transition_direction) != 0 && age < (uint32_t)id(ui_animation_ms)) {
+        const int dx = (int)((age * 128U) / (uint32_t)id(ui_animation_ms));
         if (id(transition_direction) > 0) {
           render_page(id(previous_page), -dx, id(previous_cursor));
           render_page(id(current_page), 128 - dx, id(cursor));
