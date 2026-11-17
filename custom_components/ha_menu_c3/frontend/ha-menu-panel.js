@@ -479,12 +479,66 @@ class HAMenuC3Panel extends HTMLElement {
   renderSettings() {
     const host = this.shadowRoot.querySelector("#settings");
     if (!host || !this.status) return;
-    const seconds = this.status.config.settings?.sleep_seconds ?? 30;
-    host.innerHTML = `<div class="field" style="max-width:340px">
-      <label>Veille écran et LED (secondes)</label>
-      <input type="number" min="0" max="3600" step="1" data-setting="sleep_seconds" value="${esc(seconds)}">
-      <div class="hint">0 : toujours allumés. La LED retrouve sa couleur au réveil.</div>
-    </div>`;
+    const settings = this.status.config.settings || {};
+    const checked = (key, fallback=false) => (settings[key] ?? fallback) ? "checked" : "";
+    const gestures = ["double", "triple", "hold"];
+    const names = ["Double clic", "Triple clic", "Maintien prolongé (1,8 s)"];
+    const shortcuts = this.status.config.shortcuts || {};
+    const shortcutEditor = gestures.map((gesture, i) => {
+      const action = shortcuts[gesture] || {service:"", entity_id:"", data:{}};
+      return `<div class="section">
+        <h3>${names[i]}</h3>
+        <div class="form-grid">
+          <div class="field"><label>Service Home Assistant</label>
+            <input data-shortcut="${gesture}" data-shortcut-key="service" placeholder="light.toggle" value="${esc(action.service)}">
+          </div>
+          <div class="field"><label>Entité</label>
+            <input data-shortcut="${gesture}" data-shortcut-key="entity_id" placeholder="light.salon" value="${esc(action.entity_id)}">
+          </div>
+        </div>
+        <div class="field"><label>Données du service (JSON)</label>
+          <textarea data-shortcut="${gesture}" data-shortcut-key="data">${esc(JSON.stringify(action.data || {}, null, 2))}</textarea>
+        </div>
+        <div class="hint">Laisser les champs vides pour désactiver ce raccourci.</div>
+      </div>`;
+    }).join("");
+    host.innerHTML = `
+      <div class="form-grid">
+        <div class="field"><label>Langue / Language</label>
+          <select data-setting="language">
+            <option value="fr" ${settings.language !== "en" ? "selected" : ""}>Français</option>
+            <option value="en" ${settings.language === "en" ? "selected" : ""}>English</option>
+          </select>
+        </div>
+        <div class="field"><label>Taille de police OLED</label>
+          <select data-setting="font_size">
+            <option value="normal" ${settings.font_size !== "small" ? "selected" : ""}>Normale</option>
+            <option value="small" ${settings.font_size === "small" ? "selected" : ""}>Petite</option>
+          </select>
+        </div>
+        <div class="field"><label>Pas de luminosité</label>
+          <select data-setting="brightness_step">
+            ${[1,5,10].map(n => `<option value="${n}" ${(settings.brightness_step ?? 5) === n ? "selected" : ""}>${n} %</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Contraste OLED (1–100 %)</label>
+          <input type="number" min="1" max="100" data-setting="oled_contrast" value="${esc(settings.oled_contrast ?? 80)}">
+        </div>
+        <div class="field"><label>Veille écran et LED (secondes)</label>
+          <input type="number" min="0" max="3600" data-setting="sleep_seconds" value="${esc(settings.sleep_seconds ?? 30)}">
+        </div>
+      </div>
+      <div class="control-list">
+        <label class="control-check"><input type="checkbox" data-setting="direct_edit" ${checked("direct_edit")}> Réglage direct au long clic</label>
+        <label class="control-check"><input type="checkbox" data-setting="encoder_inverted" ${checked("encoder_inverted")}> Inverser la rotation</label>
+        <label class="control-check"><input type="checkbox" data-setting="animations" ${checked("animations",true)}> Animations de navigation</label>
+        <label class="control-check"><input type="checkbox" data-setting="offline_cache" ${checked("offline_cache",true)}> Dernier menu disponible hors ligne</label>
+      </div>
+      <div class="section">
+        <h3>Raccourcis de l'encodeur</h3>
+        <p class="hint">Le clic simple conserve son action. Le long clic classique (0,7 s) ouvre le menu ; le maintien prolongé déclenche le raccourci choisi.</p>
+        ${shortcutEditor}
+      </div>`;
   }
 
   renderDiagnostics() {
