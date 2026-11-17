@@ -412,6 +412,7 @@ class HAMenuC3Panel extends HTMLElement {
       ? `Dernière synchronisation : ${this.status.error}` : "";
     const msg = this.notice || backendError;
     host.innerHTML = msg ? `<div class="notice ${esc(this.noticeType || (backendError ? "error" : ""))}">${esc(msg)}</div>` : "";
+    this.localize(host);
   }
 
   renderTree() {
@@ -419,6 +420,7 @@ class HAMenuC3Panel extends HTMLElement {
     if (!host) return;
     if (!this.items.length) {
       host.innerHTML = `<div class="empty">Menu vide. Ajoute une première entrée.</div><div class="tree-system">ⓘ À propos <small>(système, dernier)</small></div>`;
+      this.localize(host);
       return;
     }
     const rows = [];
@@ -441,6 +443,7 @@ class HAMenuC3Panel extends HTMLElement {
     host.innerHTML = `<div class="tree">${rows.join("")}</div>
       <div class="tree-root-drop" data-drop-root="true">↳ Déposer ici pour déplacer à la racine (en dernier)</div>
       <div class="tree-system">ⓘ À propos <small>(système, dernier)</small></div>`;
+    this.localize(host);
   }
 
   renderEditor() {
@@ -683,6 +686,7 @@ class HAMenuC3Panel extends HTMLElement {
         <p class="hint">Le clic simple conserve son action. Le long clic classique (0,7 s) ouvre le menu ; le maintien prolongé déclenche le raccourci choisi.</p>
         ${shortcutEditor}
       </div>`;
+    this.localize(host);
   }
 
   renderDiagnostics() {
@@ -715,6 +719,7 @@ class HAMenuC3Panel extends HTMLElement {
       `<div class="diagnostic ${val==="—" ? "missing" : ""}"><span class="sub">${esc(key)}</span><strong>${esc(val)}</strong></div>`).join("")}</div>
       ${missing ? `<p class="hint meta">Certaines données manquent. Vérifie les entités de diagnostic ESPHome et flashe le firmware 0.4 pour la remontée directe.</p>` : ""}
       ${this.status.error ? `<p class="notice error">${esc(this.status.error)}</p>` : ""}`;
+    this.localize(host);
   }
 
   renderLed() {
