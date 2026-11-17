@@ -125,6 +125,28 @@ const EN_TRANSLATIONS = {
   "0 : toujours allumés. La LED retrouve sa couleur au réveil.": "0: always on. The LED restores its color when awakened."
 };
 
+Object.assign(EN_TRANSLATIONS, {
+  "Choisis une lampe, un volet, un ventilateur, un lecteur multimédia, un thermostat ou un humidificateur.": "Choose a light, cover, fan, media player, thermostat or humidifier.",
+  "Coche les fonctions voulues et clique sur « Appliquer les réglages ». Le clic court garde l'action ci-dessus.": "Enable the controls you want and click Apply controls. A short press still performs the action above.",
+  "Entité introuvable dans les états Home Assistant. Vérifie son identifiant.": "Entity not found in Home Assistant states. Check its ID.",
+  "Recherche par nom ou ID, prises incluses.": "Search by name or entity ID, including outlets.",
+  "Identifiant conservé si le nom change.": "The ID remains unchanged when renaming.",
+  "Cette entrée contient des enfants : elle fonctionne comme un sous-menu.": "This entry has children and acts as a submenu.",
+  "Le clic simple conserve son action. Le long clic classique (0,7 s) ouvre le menu ; le maintien prolongé déclenche le raccourci choisi.": "Single click retains its normal action. Standard long press (0.7 s) opens controls; extended hold triggers your shortcut.",
+  "Glisser pour déplacer. → place sous l'entrée précédente ; ← remonte d'un niveau. « À propos » reste en dernier.": "Drag to reorder. → nests under the previous entry; ← moves up one level. About stays last.",
+  "Menu vide. Ajoute une première entrée.": "Empty menu. Add your first entry.",
+  "Les modifications non enregistrées seront perdues. Changer d'appareil ?": "Unsaved changes will be lost. Switch device?",
+  "Ajouter dans ce menu": "Add inside this menu",
+  "La LED revient à cette couleur après une animation.": "The LED returns to this color after an animation.",
+  "Entrée ajoutée. Pense à enregistrer.": "Entry added. Remember to save.",
+  "Réglages modifiés. Clique sur Appliquer les réglages pour envoyer à l'ESP32.": "Controls changed. Click Apply controls to send them to the ESP32.",
+  "Enregistrement et synchronisation en cours...": "Saving and syncing...",
+  "Synchronisation ESPHome...": "Syncing ESPHome...",
+  "Menu envoyé à l'ESP32.": "Menu sent to ESP32.",
+  "Identification lancée.": "Identification started.",
+  "Aucune entité trouvée. Tu peux toujours saisir son identifiant exact.": "No entity found. You can still enter its exact ID."
+});
+
 const STYLES = `
   :host { display:block; min-height:100%; color:var(--primary-text-color); background:var(--primary-background-color); font:14px/1.45 var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
   * { box-sizing:border-box; }
@@ -411,7 +433,17 @@ class HAMenuC3Panel extends HTMLElement {
     if (!host) return;
     const backendError = this.status?.sync === "error" && this.status?.error
       ? `Dernière synchronisation : ${this.status.error}` : "";
-    const msg = this.notice || backendError;
+    let msg = this.notice || backendError;
+    if (this.language === "en") {
+      msg = msg.replace("Configuration enregistrée :", "Saved:")
+               .replace(" entrées synchronisées.", " entries synced.")
+               .replace("Configuration enregistrée dans Home Assistant, mais synchronisation impossible :", "Saved to HA, but sync failed:")
+               .replace("Erreur lors de l'enregistrement :", "Save error:")
+               .replace("Synchronisation impossible :", "Sync failed:")
+               .replace("Chargement impossible :", "Loading failed:")
+               .replace("Erreur :", "Error:");
+      msg = EN_TRANSLATIONS[msg] || msg;
+    }
     host.innerHTML = msg ? `<div class="notice ${esc(this.noticeType || (backendError ? "error" : ""))}">${esc(msg)}</div>` : "";
     this.localize(host);
   }
