@@ -57,7 +57,7 @@ class MenuManager:
         self.reported_at = None
         self.config = validate_config(DEFAULT_CONFIG)
         self.sync_lock = asyncio.Lock()
-        self.adjustments = LatestAdjustmentQueue(hass.async_create_task, self.apply_control)
+        self.adjustments = LatestAdjustmentQueue(getattr(hass, "async_create_task", asyncio.create_task), self.apply_control)
         self.last_sync = "not_synced"
         self.last_error = ""
         self.last_sync_at = None
@@ -186,7 +186,7 @@ class MenuManager:
             return {"open":"OPEN", "closed":"CLOSED", "opening":"OPENING", "closing":"CLOSING"}[state.state]
         unit = state.attributes.get("unit_of_measurement", "")
         text = f"{state.state} {unit}" if unit else str(state.state)
-        return re.sub(r"[\r\n\t]+", " ", text).strip()[:12]
+        return re.sub(r"[\r\n\t]+", " ", text).strip()[:48]
 
     async def sync_item_states(self, entity_id: str | None = None) -> None:
         """Send state snapshots; only the affected entity on live updates."""
