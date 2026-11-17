@@ -121,7 +121,11 @@ def attributes_payload(item: dict, state) -> dict:
         ):
             if settings.get(name) and supported:
                 payload["flags"] |= BITS[name]
-        payload["media_volume"] = bounded_int(float(attrs.get("volume_level") or 0) * 100, 0, 100, 50)
+        try:
+            volume = float(attrs.get("volume_level") or 0) * 100
+        except (ValueError, TypeError):
+            volume = 50
+        payload["media_volume"] = bounded_int(volume, 0, 100, 50)
     return payload
 
 
