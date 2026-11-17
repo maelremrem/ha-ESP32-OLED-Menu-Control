@@ -46,7 +46,7 @@ class OfflineCacheStorageTests(unittest.TestCase):
                 self.assertIn("id(cached_menu_checksum) = checksum;", source)
                 self.assertIn("cached.size() <= 3800U", source)
                 self.assertIn('save_snapshot("");', source)
-                self.assertIn('fw_version: "0.6.1"', source)
+                self.assertIn('fw_version: "0.6.2"', source)
 
     def test_snapshot_round_trip_at_block_boundaries(self):
         for size in (0, 1, 239, 240, 241, 479, 480, 481, 3799, 3800):

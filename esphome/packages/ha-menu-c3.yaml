@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.6.1"
+  fw_version: "0.6.2"
 
 esphome:
   name: ${device_name}
@@ -105,7 +105,11 @@ api:
               id(menu_synced) = false;
               id(menu_cached) = false;
             }
-            id(menu_kinds)[slot] = kind == "info" || kind == "local" ? kind : "action";
+            // ESPHome API string arguments are StringRef (not std::string).
+            if (kind == "info" || kind == "local")
+              id(menu_kinds)[slot] = kind.c_str();
+            else
+              id(menu_kinds)[slot] = "action";
             id(menu_local_commands)[slot] = local_command.substr(0, 24);
             id(menu_confirm)[slot] = confirm ? 1 : 0;
             id(current_page) = "";
