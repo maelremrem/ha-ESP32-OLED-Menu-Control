@@ -997,7 +997,7 @@ display:
       auto render_page = [&](const std::string &page, int x, int selection) {
         const bool about = page == "__about";
         std::string title = about ? (id(ui_language) == "en" ? "ABOUT" : "A PROPOS") :
-                            (!id(menu_synced) ? "OFFLINE" : "HA MENU");
+                            ((!id(menu_synced) || !id(native_api).is_connected_with_state_subscription()) ? "OFFLINE" : "HA MENU");
         for (int i = 0; !about && i < id(menu_length); i++) {
           if (!page.empty() && id(menu_ids)[i] == page) {
             title = id(menu_labels)[i];
@@ -1465,7 +1465,7 @@ script:
             id(run_local).execute(id(menu_local_commands)[slot]);
             return;
           }
-          if (!id(menu_synced)) {
+          if (!id(menu_synced) || !id(native_api).is_connected_with_state_subscription()) {
             id(feedback_mode) = 3;
             id(feedback_message) = id(ui_language) == "en" ? "Home Assistant offline" : "Home Assistant hors ligne";
             id(feedback_started) = millis();
@@ -1535,7 +1535,7 @@ script:
           for (int i = 0; i < id(menu_length); i++) {
             if (id(menu_parents)[i] != id(current_page)) continue;
             if (position++ != id(cursor)) continue;
-            if (id(menu_synced) && id(menu_control_flags)[i] != 0) {
+            if (id(menu_synced) && id(native_api).is_connected_with_state_subscription() && id(menu_control_flags)[i] != 0) {
               id(control_slot) = i;
               id(control_loading) = true;
               id(control_started) = now;
