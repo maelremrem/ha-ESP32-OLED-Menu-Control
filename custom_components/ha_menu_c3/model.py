@@ -11,7 +11,15 @@ CONTROL_KEYS = {
     "brightness": "light", "color_temp": "light", "color": "light",
     "temperature": "climate", "hvac_mode": "climate",
     "humidity": "humidifier", "humidifier_mode": "humidifier",
+    "cover_position": "cover", "cover_open": "cover", "cover_stop": "cover", "cover_close": "cover",
+    "fan_percentage": "fan", "fan_oscillate": "fan", "fan_direction": "fan",
+    "media_volume": "media_player", "media_toggle": "media_player",
+    "media_next": "media_player", "media_previous": "media_player",
 }
+
+ITEM_KINDS = {"action", "info", "local"}
+LOCAL_COMMANDS = {"led_toggle", "identify", "oled_sleep"}
+GESTURES = ("double", "triple", "hold")
 
 
 
@@ -40,6 +48,13 @@ def validate_config(config: dict) -> dict:
         entity = raw.get("entity_id", "")
         data = raw.get("data", {})
         controls = raw.get("controls", {})
+        kind = raw.get("kind", "action")
+        local_command = raw.get("local_command", "")
+        confirm = raw.get("confirm", False)
+        if kind not in ITEM_KINDS or type(confirm) is not bool:
+            raise MenuValidationError(f"Type d'entree invalide : {ident}")
+        if not isinstance(local_command, str) or (kind == "local" and local_command not in LOCAL_COMMANDS):
+            raise MenuValidationError(f"Action locale invalide : {ident}")
         if not isinstance(ident, str) or not ID_PATTERN.fullmatch(ident):
             raise MenuValidationError("Identifiant invalide (lettres, chiffres, _ et -)")
         if ident == "__about":
@@ -79,6 +94,8 @@ def validate_config(config: dict) -> dict:
             "id": ident, "label": label.strip(), "parent": parent,
             "service": service, "entity_id": entity.strip(), "data": data,
             "controls": active_controls,
+            "kind": kind, "local_command": local_command if kind == "local" else "",
+            "confirm": confirm if kind != "info" else False,
         })
 
     by_id = {item["id"]: item for item in entries}
@@ -139,8 +156,60 @@ def validate_config(config: dict) -> dict:
     if type(sleep_seconds) is not int or not 0 <= sleep_seconds <= 3600:
         raise MenuValidationError("Veille : entier entre 0 et 3600 secondes")
 
+    opts = {
+        "language": ("fr", "en"),
+        "font_size": ("normal", "small"),
+        "brightness_step": (1, 5, 10),
+    }
+    for key, values in opts.items():
+        default = {"language": "fr", "font_size": "normal", "brightness_step": 5}[key]
+        if settings.get(key, default) not in values:
+            raise MenuValidationError(f"Parametre {key} invalide")
+    for key, default in {"direct_edit": False, "encoder_inverted": False,
+                         "animations": True, "offline_cache": True}.items():
+        if type(settings.get(key, default)) is not bool:
+            raise MenuValidationError(f"Parametre {key} invalide")
+    contrast = settings.get("oled_contrast", 80)
+    if type(contrast) is not int or not 1 <= contrast <= 100:
+        raise MenuValidationError("Contraste OLED invalide")
+    shortcuts = config.get("shortcuts", {})
+    if not isinstance(shortcuts, dict) or any(g not in GESTURES for g in shortcuts):
+        raise MenuValidationError("Raccourcis invalides")
+    safe_shortcuts = {}
+    for gesture, action in shortcuts.items():
+        if not isinstance(action, dict):
+            raise MenuValidationError("Raccourci invalide")
+        svc = action.get("service", "")
+        entity_id = action.get("entity_id", "")
+        payload = action.get("data", {})
+        if not svc and not entity_id and not payload:
+            continue
+        if (not isinstance(svc, str) or not SERVICE_PATTERN.fullmatch(svc)
+                or not isinstance(entity_id, str) or len(entity_id) > 255
+                or not isinstance(payload, dict)):
+            raise MenuValidationError("Service de raccourci invalide")
+        import json
+        try:
+            raw = json.dumps(payload, allow_nan=False)
+        except (TypeError, ValueError, RecursionError) as err:
+            raise MenuValidationError("Donnees de raccourci invalides") from err
+        if len(raw.encode("utf-8")) > 2048:
+            raise MenuValidationError("Donnees de raccourci trop longues")
+        safe_shortcuts[gesture] = {"service": svc, "entity_id": entity_id.strip(), "data": payload}
+
     return {
-        "settings": {"sleep_seconds": sleep_seconds},
+        "settings": {
+            "sleep_seconds": sleep_seconds,
+            "language": settings.get("language", "fr"),
+            "font_size": settings.get("font_size", "normal"),
+            "brightness_step": settings.get("brightness_step", 5),
+            "direct_edit": settings.get("direct_edit", False),
+            "encoder_inverted": settings.get("encoder_inverted", False),
+            "animations": settings.get("animations", True),
+            "offline_cache": settings.get("offline_cache", True),
+            "oled_contrast": contrast,
+        },
+        "shortcuts": safe_shortcuts,
         "items": sorted_items,
         "led": {
             "entity_id": status_entity.strip(),
