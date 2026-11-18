@@ -34,7 +34,7 @@ ESPHome limits the restored length of one `std::string` global to **254 characte
 
 ### Upgrade
 
-Update the HACS integration to **0.6.0**, **restart Home Assistant**, and **OTA flash ESPHome 0.6.3** from the existing GitHub package. The new integration and firmware must be updated together because new ESPHome user actions and menu fields are required.
+Update the HACS integration to **0.6.1**, **restart Home Assistant**, and **OTA flash ESPHome 0.6.3** from the existing GitHub package. The new integration and firmware must be updated together because new ESPHome user actions and menu fields are required.
 
 ## Firmware
 
