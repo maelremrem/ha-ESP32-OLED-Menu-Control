@@ -44,7 +44,7 @@ class OledControlsBackTests(unittest.TestCase):
         self.assertIn("password: !secret ota_password", standalone)
         self.assertNotIn("!secret", package)
         for source in (standalone, package):
-            self.assertIn('fw_version: "0.6.2"', source)
+            self.assertIn('fw_version: "0.6.3"', source)
 
 
 if __name__ == "__main__":
