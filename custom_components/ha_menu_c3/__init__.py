@@ -408,9 +408,10 @@ class MenuManager:
             request = adjustment(item, state, field, value)
             if not self.hass.services.has_service(request.domain, request.service):
                 raise ValueError("Commande indisponible")
-            # Serialize service completion so older brightness values cannot overtake newer ones.
+            # Dispatch immediately: waiting for slow devices would stall later detents.
+            # The per-item/field queue preserves dispatch order and the newest pending value.
             await self.hass.services.async_call(
-                request.domain, request.service, request.data, blocking=True,
+                request.domain, request.service, request.data, blocking=False,
             )
         except Exception as err:
             _LOGGER.warning("Control %s/%s rejected: %s", item_id, field, err)
@@ -587,7 +588,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             frontend_url_path=PANEL_URL,
             sidebar_title="HA Menu C3",
             sidebar_icon="mdi:gesture-tap-button",
-            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=10",
+            module_url="/ha_menu_c3_assets/ha-menu-panel.js?v=11",
             require_admin=True,
         )
         hass.data[f"{DOMAIN}_panel_registered"] = True
