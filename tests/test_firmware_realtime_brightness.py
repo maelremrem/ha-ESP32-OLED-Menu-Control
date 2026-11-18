@@ -16,14 +16,16 @@ class RealtimeBrightnessFirmwareTests(unittest.TestCase):
             with self.subTest(firmware=path.name):
                 source = path.read_text(encoding="utf-8")
                 script = source.split("  - id: send_adjust\n", 1)[1].split("\n  - id: send_selection", 1)[0]
-                self.assertIn("mode: restart", script)
-                self.assertNotIn("mode: queued", script)
-                self.assertNotIn("max_runs:", script)
+                self.assertIn("mode: queued", script)
+                self.assertIn("max_runs: 64", script)
+                self.assertNotIn("mode: restart", script)
                 self.assertIn("esphome.ha_menu_control_adjust", script)
                 self.assertIn("field: \"{{ field_key }}\"", script)
                 self.assertIn("value: \"{{ field_value }}\"", script)
                 self.assertIn("id(send_adjust).execute(", source)
-                self.assertIn('fw_version: "0.6.2"', source)
+                self.assertIn("(id(ctrl_hue) + delta + 360) % 360", source)
+                self.assertNotIn("delta * 15", source)
+                self.assertIn('fw_version: "0.6.3"', source)
 
     def test_secrets_stay_local(self):
         standalone = FILES[0].read_text(encoding="utf-8")
