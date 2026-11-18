@@ -17,7 +17,7 @@ class V06FirmwareTests(unittest.TestCase):
                              "set_control_flags", "open_controls", "execute_item",
                              "run_local", "dispatch_click", "send_shortcut"):
                     self.assertIn(name, source)
-                self.assertIn('fw_version: "0.6.2"', source)
+                self.assertIn('fw_version: "0.6.3"', source)
                 self.assertIn('const int total = (int)id(ctrl_fields).size() + 1;', source)
                 self.assertIn("id(menu_confirm)[slot]", source)
                 self.assertIn("id(menu_cached)", source)

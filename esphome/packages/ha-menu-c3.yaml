@@ -2,7 +2,7 @@ substitutions:
   device_name: ha-menu-c3
   friendly_name: HA Menu C3
   encoder_debounce_ms: "35"
-  fw_version: "0.6.2"
+  fw_version: "0.6.3"
 
 esphome:
   name: ${device_name}
@@ -1356,7 +1356,7 @@ script:
                 id(ctrl_kelvin) = std::clamp(id(ctrl_kelvin) + delta * 100, id(ctrl_min_kelvin), id(ctrl_max_kelvin));
                 id(ctrl_field) = "color_temp"; current = id(ctrl_kelvin); break;
               case 4:
-                id(ctrl_hue) = (id(ctrl_hue) + delta * 15 + 360) % 360;
+                id(ctrl_hue) = (id(ctrl_hue) + delta + 360) % 360;
                 id(ctrl_field) = "color"; current = id(ctrl_hue); break;
               case 8:
                 id(ctrl_temp) = std::clamp(id(ctrl_temp) + delta * id(ctrl_temp_step), id(ctrl_min_temp), id(ctrl_max_temp));
@@ -1681,7 +1681,8 @@ script:
                 id(feedback_started) = millis();
 
   - id: send_adjust
-    mode: restart
+    mode: queued
+    max_runs: 64
     parameters:
       item_key: string
       field_key: string

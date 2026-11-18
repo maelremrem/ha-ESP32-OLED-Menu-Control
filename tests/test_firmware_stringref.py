@@ -20,7 +20,7 @@ class StringRefCompileTests(unittest.TestCase):
                 self.assertIn('if (kind == "info" || kind == "local")', source)
                 self.assertIn('id(menu_kinds)[slot] = kind.c_str();', source)
                 self.assertIn('id(menu_kinds)[slot] = "action";', source)
-                self.assertIn('fw_version: "0.6.2"', source)
+                self.assertIn('fw_version: "0.6.3"', source)
 
     def test_local_api_ota_secrets_unchanged(self):
         standalone = FILES[0].read_text(encoding="utf-8")
